@@ -245,6 +245,7 @@ impl Viewport {
                                 ),
                                 Span::styled("ctrl+o to expand", Style::default().fg(Color::DarkGray)),
                             ]));
+                            lines.push(Line::from(""));
                         } else {
                             lines.push(Line::from(vec![
                                 Span::styled(
@@ -260,6 +261,7 @@ impl Viewport {
                                     theme.thinking_block,
                                 ));
                             }
+                            lines.push(Line::from(""));
                         }
                     }
 
@@ -277,10 +279,20 @@ impl Viewport {
                     lines.push(Line::from(""));
                 }
                 MessageRole::System => {
-                    lines.push(Line::from(Span::styled(
-                        &msg.content,
-                        theme.system_message,
-                    )));
+                    // Stats lines (Cost/Time) use thinking_block style (light gray)
+                    // Other system messages use white
+                    let style = if msg.content.starts_with("Cost:") {
+                        theme.thinking_block
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    // Add blank line before stats
+                    if msg.content.starts_with("Cost:") {
+                        lines.push(Line::from(""));
+                    }
+                    for line in msg.content.lines() {
+                        lines.push(Line::from(Span::styled(line.to_string(), style)));
+                    }
                     lines.push(Line::from(""));
                 }
             }

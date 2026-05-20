@@ -293,7 +293,7 @@ pub async fn interactive(
                                     }
                                     "/help" => {
                                         app.viewport.add_error_message(
-                                            "/quit · /clear · /help · /status\n\
+                                            "/quit · /clear · /help · /status · /usage\n\
                                              Ctrl+T tasks · Ctrl+O thinking · Ctrl+D exit".into()
                                         );
                                     }
@@ -302,6 +302,14 @@ pub async fn interactive(
                                             "Model: {} │ Tokens: {}/{} │ Tasks: {}",
                                             app.status.model_name, app.status.tokens_used,
                                             app.status.tokens_max, app.tasks.len()
+                                        ));
+                                    }
+                                    "/usage" => {
+                                        let in_str = format_token_count(app.status.session_input_tokens);
+                                        let out_str = format_token_count(app.status.session_output_tokens);
+                                        app.viewport.add_error_message(format!(
+                                            "Session Usage:\n  Requests: {}\n  Tokens: {} in / {} out\n  Total cost: {:.4}",
+                                            app.status.session_requests, in_str, out_str, app.status.session_cost
                                         ));
                                     }
                                     _ if input.starts_with('/') => {
@@ -373,6 +381,10 @@ pub async fn interactive(
                     // Update token usage in status
                     if let Some(s) = &stats {
                         app.status.tokens_used += s.input_tokens + s.output_tokens;
+                        app.status.session_input_tokens += s.input_tokens;
+                        app.status.session_output_tokens += s.output_tokens;
+                        app.status.session_cost += s.cost;
+                        app.status.session_requests += 1;
                     }
 
                     app.viewport.finalize_response_with_stats(stats);

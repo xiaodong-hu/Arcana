@@ -43,7 +43,7 @@ impl Theme {
             diff_context: Style::default().fg(Color::White),
             status_bar_bg: Color::Rgb(26, 26, 46), // #1a1a2e
             prompt_glyph: Style::default()
-                .fg(Color::Rgb(123, 47, 190))
+                .fg(Color::Rgb(0, 166, 79)) // pigment green
                 .add_modifier(Modifier::BOLD),
             overlay_border: Color::Rgb(0, 212, 255),
             dim: Style::default().fg(Color::DarkGray),

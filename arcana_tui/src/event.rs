@@ -127,6 +127,8 @@ pub fn classify_key(key: &KeyEvent) -> KeyAction {
         (m, KeyCode::Char('d')) if m.contains(KeyModifiers::CONTROL) => KeyAction::EndSession,
         (m, KeyCode::Char('u')) if m.contains(KeyModifiers::CONTROL) => KeyAction::HalfPageUp,
         (m, KeyCode::Char('j')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
+        (m, KeyCode::Char('\n')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
+        (m, KeyCode::Char('\r')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
         (m, KeyCode::Char('o')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Expand,
         (m, KeyCode::Char('g')) if m.contains(KeyModifiers::CONTROL) => KeyAction::OpenEditor,
         (m, KeyCode::Char('t')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleTasks,
@@ -136,9 +138,10 @@ pub fn classify_key(key: &KeyEvent) -> KeyAction {
             KeyAction::Freeze
         }
 
-        // Alt+Enter or Ctrl+Enter for newline
+        // Alt+Enter, Ctrl+Enter, or Shift+Enter for newline
         (m, KeyCode::Enter) if m.contains(KeyModifiers::ALT) => KeyAction::Newline,
         (m, KeyCode::Enter) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
+        (m, KeyCode::Enter) if m.contains(KeyModifiers::SHIFT) => KeyAction::Newline,
 
         // Basic keys
         (_, KeyCode::Enter) => KeyAction::Enter,

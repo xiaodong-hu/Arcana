@@ -35,12 +35,13 @@ pub fn render_banner(frame: &mut Frame, area: Rect, theme: &Theme, status: &Stat
         return;
     }
 
-    // Calculate vertical centering
+    // Calculate vertical centering (place in upper-middle area)
     let total_lines = BANNER_ART.len() + 2 + 4; // art + gap + tagline + gap + metadata
     let start_y = if inner.height as usize > total_lines {
-        (inner.height as usize - total_lines) / 2
+        // Place at roughly 1/3 from top for "upper middle" feel
+        ((inner.height as usize - total_lines) / 3).max(2)
     } else {
-        0
+        1
     };
 
     // Render ASCII art with gradient coloring
@@ -116,6 +117,6 @@ pub fn banner_height(area_width: u16) -> u16 {
     if area_width < 54 {
         3 // Compact mode
     } else {
-        (BANNER_ART.len() as u16) + 6 // Art + borders + tagline + metadata
+        (BANNER_ART.len() as u16) + 10 // Art + generous spacing + tagline + metadata
     }
 }

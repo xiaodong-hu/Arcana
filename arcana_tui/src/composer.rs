@@ -239,7 +239,7 @@ impl Composer {
                 if !hint.is_empty() {
                     spans.push(Span::styled(
                         hint.to_string(),
-                        Style::default().fg(Color::Rgb(255, 126, 0)), // Amber #FF7E00
+                        Style::default().fg(Color::Rgb(255, 165, 80)), // shallow orange
                     ));
                 }
             }
@@ -271,13 +271,14 @@ impl Composer {
 /// Get slash command hint text.
 fn slash_hint(input: &str) -> &'static str {
     match input {
-        "/" => " quit · help · mode · clear · status",
+        "/" => " quit · help · mode · clear · status · usage",
         "/q" | "/qu" | "/qui" | "/quit" => " ← exit session",
         "/h" | "/he" | "/hel" | "/help" => " ← show commands",
         "/mo" | "/mod" | "/mode" => " ← switch mode",
         "/m" | "/model" => " ← change model",
         "/c" | "/cl" | "/cle" | "/clea" | "/clear" => " ← clear viewport",
         "/s" | "/st" | "/sta" | "/stat" | "/statu" | "/status" => " ← show status",
+        "/u" | "/us" | "/usa" | "/usag" | "/usage" => " ← session token/cost stats",
         _ => "",
     }
 }

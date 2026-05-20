@@ -76,6 +76,10 @@ pub struct StatusData {
     pub model_name: String,
     pub tokens_used: usize,
     pub tokens_max: usize,
+    pub session_input_tokens: usize,
+    pub session_output_tokens: usize,
+    pub session_cost: f64,
+    pub session_requests: usize,
 }
 
 impl Default for StatusData {
@@ -84,6 +88,10 @@ impl Default for StatusData {
             model_name: "deepseek-v4-pro".into(),
             tokens_used: 0,
             tokens_max: 1_000_000,
+            session_input_tokens: 0,
+            session_output_tokens: 0,
+            session_cost: 0.0,
+            session_requests: 0,
         }
     }
 }
@@ -102,13 +110,13 @@ impl ResponseStats {
         let in_str = format_token_count(self.input_tokens);
         let out_str = format_token_count(self.output_tokens);
         format!(
-            "Expense: {:.4} ( {} in / {} out )\nTime: {:.1}s",
+            "Cost: {:.4} ( {} in / {} out )\nTime: {:.1}s",
             self.cost, in_str, out_str, self.duration_secs
         )
     }
 }
 
-fn format_token_count(n: usize) -> String {
+pub fn format_token_count(n: usize) -> String {
     if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1_000_000.0) }
     else if n >= 1_000 { format!("{:.1}K", n as f64 / 1_000.0) }
     else { format!("{}", n) }

@@ -1,5 +1,6 @@
 use crossterm::{
     execute,
+    event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags},
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
@@ -8,6 +9,7 @@ use std::io::{self, stdout};
 /// Terminal wrapper that manages raw mode and alternate screen.
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    keyboard_enhanced: bool,
 }
 
 impl Tui {
@@ -15,14 +17,19 @@ impl Tui {
     pub fn new() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
         execute!(stdout(), EnterAlternateScreen)?;
+
+        // Try to enable kitty keyboard protocol for proper Ctrl+Enter
+        let keyboard_enhanced = execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+            )
+        ).is_ok();
+
         let backend = CrosstermBackend::new(stdout());
         let terminal = Terminal::new(backend)?;
-        Ok(Self { terminal })
-    }
-
-    /// Get a mutable reference to the terminal for drawing.
-    pub fn terminal_mut(&mut self) -> &mut Terminal<CrosstermBackend<io::Stdout>> {
-        &mut self.terminal
+        Ok(Self { terminal, keyboard_enhanced })
     }
 
     /// Draw a frame.
@@ -36,15 +43,12 @@ impl Tui {
 
     /// Restore the terminal to its original state.
     pub fn restore(&mut self) -> io::Result<()> {
+        if self.keyboard_enhanced {
+            let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
+        }
         terminal::disable_raw_mode()?;
         execute!(self.terminal.backend_mut(), LeaveAlternateScreen)?;
         Ok(())
-    }
-
-    /// Get the current terminal size.
-    pub fn size(&self) -> io::Result<Rect> {
-        let size = self.terminal.size()?;
-        Ok(Rect::new(0, 0, size.width, size.height))
     }
 }
 
