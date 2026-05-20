@@ -194,6 +194,8 @@ pub struct SkillInfo {
     pub name: String,
     pub mode: String,
     pub trigger_desc: String,
+    /// true = system skill (always loaded), false = user-defined
+    pub system: bool,
 }
 
 /// Sub-agent info for display.

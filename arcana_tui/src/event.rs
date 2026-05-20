@@ -27,9 +27,10 @@ pub enum AppEvent {
 }
 
 /// Spawn the terminal event reader task.
-/// Returns a receiver for AppEvents.
-pub fn spawn_event_reader() -> mpsc::UnboundedReceiver<AppEvent> {
+/// Returns (sender, receiver) so other subsystems can also send AppEvents.
+pub fn spawn_event_reader() -> (mpsc::UnboundedSender<AppEvent>, mpsc::UnboundedReceiver<AppEvent>) {
     let (tx, rx) = mpsc::unbounded_channel();
+    let tx2 = tx.clone();
 
     tokio::spawn(async move {
         loop {
@@ -37,12 +38,12 @@ pub fn spawn_event_reader() -> mpsc::UnboundedReceiver<AppEvent> {
             if event::poll(Duration::from_millis(250)).unwrap_or(false) {
                 match event::read() {
                     Ok(CrosstermEvent::Key(key)) => {
-                        if tx.send(AppEvent::Key(key)).is_err() {
+                        if tx2.send(AppEvent::Key(key)).is_err() {
                             break;
                         }
                     }
                     Ok(CrosstermEvent::Resize(w, h)) => {
-                        if tx.send(AppEvent::Resize(w, h)).is_err() {
+                        if tx2.send(AppEvent::Resize(w, h)).is_err() {
                             break;
                         }
                     }
@@ -51,14 +52,14 @@ pub fn spawn_event_reader() -> mpsc::UnboundedReceiver<AppEvent> {
                 }
             } else {
                 // Timeout — send tick for time-based updates
-                if tx.send(AppEvent::Tick).is_err() {
+                if tx2.send(AppEvent::Tick).is_err() {
                     break;
                 }
             }
         }
     });
 
-    rx
+    (tx, rx)
 }
 
 /// Classify a key event into a high-level action.

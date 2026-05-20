@@ -73,19 +73,7 @@ impl Viewport {
 
     /// End the current thinking block (collapse it).
     pub fn end_thinking(&mut self) {
-        if let Some(think) = self.streaming_think.take() {
-            let duration = think.start_time.elapsed().as_millis() as u64;
-            let block = ThinkingBlock {
-                content: think.content,
-                token_count: think.token_count,
-                duration_ms: duration,
-                collapsed: true,
-                index: 0,
-            };
-            // Attach to the current message or store separately
-            // For now, we'll track it in the streaming state
-            let _ = block; // Will be attached when response completes
-        }
+        // Thinking content stays in streaming_think until response finalizes
     }
 
     /// Finalize the current streaming response into a message.
@@ -95,12 +83,19 @@ impl Viewport {
 
     /// Finalize response and append usage stats line.
     pub fn finalize_response_with_stats(&mut self, stats: Option<crate::types::ResponseStats>) {
-        if !self.streaming_text.is_empty() {
+        if !self.streaming_text.is_empty() || self.streaming_think.is_some() {
+            let thinking = self.streaming_think.take().map(|t| ThinkingBlock {
+                content: t.content,
+                token_count: t.token_count,
+                duration_ms: t.start_time.elapsed().as_millis() as u64,
+                collapsed: true, // collapsed by default
+                index: 0,
+            });
             let msg = Message {
                 role: MessageRole::Agent,
                 content: std::mem::take(&mut self.streaming_text),
                 timestamp: chrono::Utc::now(),
-                thinking: None,
+                thinking,
                 tool_calls: Vec::new(),
             };
             self.messages.push(msg);
@@ -115,6 +110,19 @@ impl Viewport {
             });
         }
         self.is_streaming = false;
+    }
+
+    /// Toggle all thinking blocks expand/collapse (Ctrl+O).
+    pub fn toggle_thinking(&mut self) {
+        // Toggle the most recent thinking block, or all of them
+        let any_expanded = self.messages.iter().any(|m| {
+            m.thinking.as_ref().is_some_and(|t| !t.collapsed)
+        });
+        for msg in &mut self.messages {
+            if let Some(ref mut t) = msg.thinking {
+                t.collapsed = any_expanded; // if any expanded, collapse all; else expand all
+            }
+        }
     }
 
     /// Add a user message.
@@ -188,22 +196,26 @@ impl Viewport {
                     lines.push(Line::from(""));
                 }
                 MessageRole::Agent => {
-                    // Render thinking blocks (collapsed)
+                    // Render thinking blocks (collapsed by default, Ctrl+O to expand)
                     if let Some(ref think) = msg.thinking {
                         if think.collapsed {
-                            let summary = format!(
-                                "▸ Thinking ({} tokens) — {:.1}s",
-                                think.token_count,
-                                think.duration_ms as f64 / 1000.0
-                            );
-                            lines.push(Line::from(Span::styled(summary, theme.thinking_block)));
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("▸ Thinking ({} tokens, {:.1}s) ",
+                                        think.token_count, think.duration_ms as f64 / 1000.0),
+                                    theme.thinking_block,
+                                ),
+                                Span::styled("ctrl+o to expand", Style::default().fg(Color::DarkGray)),
+                            ]));
                         } else {
-                            let header = format!(
-                                "▾ Thinking ({} tokens) — {:.1}s",
-                                think.token_count,
-                                think.duration_ms as f64 / 1000.0
-                            );
-                            lines.push(Line::from(Span::styled(header, theme.thinking_block)));
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("▾ Thinking ({} tokens, {:.1}s) ",
+                                        think.token_count, think.duration_ms as f64 / 1000.0),
+                                    theme.thinking_block,
+                                ),
+                                Span::styled("ctrl+o to collapse", Style::default().fg(Color::DarkGray)),
+                            ]));
                             for line in think.content.lines() {
                                 lines.push(Line::from(Span::styled(
                                     format!("  {}", line),

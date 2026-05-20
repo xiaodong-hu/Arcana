@@ -151,40 +151,65 @@ impl Composer {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        // Build the display text with prompt glyph
-        let prompt = "❯ ";
-        let _display_text = if self.input.is_empty() && self.show_hint {
-            format!("{}[Enter to send]", prompt)
+        let in_slash_mode = self.input.starts_with('/');
+        let prompt = if in_slash_mode { "/ " } else { "❯ " };
+
+        // Build display content
+        let display_content: &str = if self.input.is_empty() && self.show_hint {
+            "[type / for commands, or enter message]"
+        } else if in_slash_mode {
+            &self.input[1..] // show without the leading /
         } else {
-            format!("{}{}", prompt, &self.input)
+            &self.input
         };
 
-        let _style = if self.input.is_empty() && self.show_hint {
+        let content_style = if self.input.is_empty() && self.show_hint {
             theme.dim
+        } else if in_slash_mode {
+            Style::default().fg(Color::Cyan)
         } else {
             Style::default().fg(Color::White)
         };
 
-        let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled(prompt, theme.prompt_glyph),
-            Span::styled(
-                if self.input.is_empty() && self.show_hint {
-                    "[Enter to send]"
-                } else {
-                    &self.input
-                },
-                if self.input.is_empty() && self.show_hint {
-                    theme.dim
-                } else {
-                    Style::default().fg(Color::White)
-                },
-            ),
-        ]));
+        let prompt_style = if in_slash_mode {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            theme.prompt_glyph
+        };
 
+        // Main input line
+        let mut spans = vec![
+            Span::styled(prompt, prompt_style),
+            Span::styled(display_content.to_string(), content_style),
+        ];
+
+        // Slash command hints (shown inline when in slash mode and input is short)
+        if in_slash_mode && self.input.len() <= 6 {
+            let hint = match self.input.as_str() {
+                "/" => " quit · help · model · mode · clear · status",
+                "/q" | "/qu" | "/qui" | "/quit" => " ← exit session",
+                "/h" | "/he" | "/hel" | "/help" => " ← show commands",
+                "/mo" | "/mod" | "/mode" => " ← switch mode",
+                "/m" | "/model" => " ← change model",
+                "/c" | "/cl" | "/cle" | "/clea" | "/clear" => " ← clear viewport",
+                "/s" | "/st" | "/sta" | "/stat" | "/statu" | "/status" => " ← show status",
+                _ => "",
+            };
+            if !hint.is_empty() {
+                spans.push(Span::styled(hint.to_string(), theme.dim));
+            }
+        }
+
+        let paragraph = Paragraph::new(Line::from(spans));
         frame.render_widget(paragraph, inner);
 
         // Set cursor position
-        let cursor_x = inner.x + prompt.len() as u16 + self.cursor_pos as u16;
+        let cursor_offset = if in_slash_mode {
+            self.cursor_pos - 1 // account for hidden /
+        } else {
+            self.cursor_pos
+        };
+        let cursor_x = inner.x + prompt.len() as u16 + cursor_offset as u16;
         let cursor_y = inner.y;
         frame.set_cursor_position(Position::new(
             cursor_x.min(inner.x + inner.width - 1),
