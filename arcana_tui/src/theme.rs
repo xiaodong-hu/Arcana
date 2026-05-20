@@ -46,9 +46,9 @@ impl Theme {
                 .fg(Color::Rgb(0, 166, 79)) // pigment green
                 .add_modifier(Modifier::BOLD),
             overlay_border: Color::Rgb(0, 212, 255),
-            dim: Style::default().fg(Color::DarkGray),
+            dim: Style::default().fg(Color::Rgb(140, 140, 160)),
             system_message: Style::default()
-                .fg(Color::DarkGray)
+                .fg(Color::Rgb(140, 140, 160))
                 .add_modifier(Modifier::ITALIC),
         }
     }

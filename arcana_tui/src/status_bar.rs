@@ -48,18 +48,9 @@ pub fn status_bar_height(
 }
 
 fn build_main_line<'a>(status: &StatusData, tasks: &[TaskInfo], skills: &[SkillInfo], agents: &[SubAgentInfo]) -> Line<'a> {
-    let pct = if status.tokens_max > 0 {
-        (status.tokens_used as f64 / status.tokens_max as f64 * 100.0) as usize
+    let filled = if status.tokens_max > 0 {
+        ((status.tokens_used as f64 / status.tokens_max as f64) * 10.0).round() as usize
     } else { 0 };
-
-    let bar_color = match pct {
-        0..=49 => Color::Green,
-        50..=79 => Color::Yellow,
-        80..=94 => Color::Rgb(255, 165, 0),
-        _ => Color::Red,
-    };
-
-    let filled = (pct as f32 / 10.0).round() as usize;
     let bar: String = format!("[{}{}]", "█".repeat(filled.min(10)), "░".repeat(10 - filled.min(10)));
     let tokens_str = format_tokens(status.tokens_used, status.tokens_max);
 
@@ -69,16 +60,20 @@ fn build_main_line<'a>(status: &StatusData, tasks: &[TaskInfo], skills: &[SkillI
     let user_skills = skills.iter().filter(|s| !s.system).count();
     let agents_count = agents.len();
 
+    // Light gray for all secondary info (visible on transparent terminals)
+    let light_gray = Color::Rgb(160, 160, 170);
+    let separator = Style::default().fg(light_gray);
+
     let spans = vec![
         Span::styled(format!(" {} ", status.model_name), Style::default().fg(Color::White)),
-        Span::styled("│", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!(" {} {} ", bar, tokens_str), Style::default().fg(bar_color)),
-        Span::styled("│", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!(" Sub-Agents: {} ", agents_count), Style::default().fg(Color::DarkGray)),
-        Span::styled("│", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!(" Skills: {}/{} ", sys_skills, user_skills), Style::default().fg(Color::DarkGray)),
-        Span::styled("│", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!(" Tasks: {}/{} ", tasks_done, tasks_total), Style::default().fg(Color::DarkGray)),
+        Span::styled("│", separator),
+        Span::styled(format!(" {} {} ", bar, tokens_str), Style::default().fg(light_gray)),
+        Span::styled("│", separator),
+        Span::styled(format!(" Sub-Agents: {} ", agents_count), Style::default().fg(light_gray)),
+        Span::styled("│", separator),
+        Span::styled(format!(" Skills: {}/{} ", sys_skills, user_skills), Style::default().fg(light_gray)),
+        Span::styled("│", separator),
+        Span::styled(format!(" Tasks: {}/{} ", tasks_done, tasks_total), Style::default().fg(light_gray)),
     ];
 
     Line::from(spans)

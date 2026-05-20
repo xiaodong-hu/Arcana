@@ -192,7 +192,7 @@ impl QueryOverlay {
                                         think.token_count, think.duration_ms as f64 / 1000.0),
                                     theme.thinking_block,
                                 ),
-                                Span::styled("ctrl+o", Style::default().fg(Color::DarkGray)),
+                                Span::styled("ctrl+o", Style::default().fg(Color::Rgb(160, 160, 170))),
                             ]));
                         } else {
                             lines.push(Line::from(Span::styled(
@@ -248,7 +248,7 @@ impl QueryOverlay {
                 "─".repeat((inner.width as usize).saturating_sub(hint.len())),
                 Style::default().fg(theme.overlay_border),
             ),
-            Span::styled(hint, Style::default().fg(Color::DarkGray)),
+            Span::styled(hint, Style::default().fg(Color::Rgb(160, 160, 170))),
         ]);
         frame.render_widget(Paragraph::new(sep_line), sep_area);
 

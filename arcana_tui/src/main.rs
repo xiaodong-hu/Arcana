@@ -1,18 +1,20 @@
 mod app;
+mod approval;
 mod banner;
 mod cli;
+mod composer;
 mod config;
+mod diff_panel;
 mod event;
 mod llm;
 mod onboard;
+mod overlay;
+mod panels;
 mod status_bar;
 mod theme;
 mod tui;
 mod types;
 mod viewport;
-mod composer;
-mod overlay;
-mod panels;
 
 use clap::Parser;
 use std::process;

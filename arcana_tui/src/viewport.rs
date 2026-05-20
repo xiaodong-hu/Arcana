@@ -243,7 +243,7 @@ impl Viewport {
                                         think.token_count, think.duration_ms as f64 / 1000.0),
                                     theme.thinking_block,
                                 ),
-                                Span::styled("ctrl+o to expand", Style::default().fg(Color::DarkGray)),
+                                Span::styled("ctrl+o to expand", Style::default().fg(Color::Rgb(160, 160, 170))),
                             ]));
                             lines.push(Line::from(""));
                         } else {
@@ -253,7 +253,7 @@ impl Viewport {
                                         think.token_count, think.duration_ms as f64 / 1000.0),
                                     theme.thinking_block,
                                 ),
-                                Span::styled("ctrl+o to collapse", Style::default().fg(Color::DarkGray)),
+                                Span::styled("ctrl+o to collapse", Style::default().fg(Color::Rgb(160, 160, 170))),
                             ]));
                             for line in think.content.lines() {
                                 lines.push(styled_line(

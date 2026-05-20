@@ -3,16 +3,18 @@ use ratatui::widgets::Paragraph;
 
 use crate::types::{PanelState, TaskInfo, TaskStatus};
 
+/// Light gray visible on transparent terminals
+const LIGHT_GRAY: Color = Color::Rgb(160, 160, 170);
+
 /// Calculate the height needed for the task panel.
 pub fn task_panel_height(panel_state: &PanelState, tasks: &[TaskInfo]) -> u16 {
     if tasks.is_empty() {
         return 0;
     }
     if panel_state.tasks_expanded {
-        // header + one line per task
         1 + tasks.len() as u16
     } else {
-        1 // collapsed: just the header
+        1
     }
 }
 
@@ -29,7 +31,6 @@ pub fn render_task_panel(
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Header line: "● Tasks (N)" on left, "ctrl+t to expand/collapse" on right
     let total = tasks.len();
     let toggle_hint = if panel_state.tasks_expanded {
         "ctrl+t to collapse"
@@ -37,14 +38,13 @@ pub fn render_task_panel(
         "ctrl+t to expand"
     };
 
-    // Calculate padding for right-aligned hint
     let header_left = format!("● Tasks ({})", total);
     let pad = (area.width as usize).saturating_sub(header_left.len() + toggle_hint.len() + 1);
 
     lines.push(Line::from(vec![
         Span::styled(&header_left, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw(" ".repeat(pad)),
-        Span::styled(toggle_hint, Style::default().fg(Color::DarkGray)),
+        Span::styled(toggle_hint, Style::default().fg(LIGHT_GRAY)),
     ]));
 
     if panel_state.tasks_expanded {
@@ -52,14 +52,15 @@ pub fn render_task_panel(
             let is_last = i == tasks.len() - 1;
             let branch = if is_last { "└── " } else { "├── " };
 
+            // Green ● = done, Orange ● = blocked/failed, Empty ○ = pending
             let (icon, icon_color) = match task.status {
                 TaskStatus::Completed => ("●", Color::Green),
-                TaskStatus::InProgress => ("◉", Color::Blue),
-                TaskStatus::Pending => ("○", Color::DarkGray),
+                TaskStatus::InProgress => ("●", Color::Rgb(255, 165, 0)), // orange
+                TaskStatus::Pending => ("○", LIGHT_GRAY),
             };
 
             lines.push(Line::from(vec![
-                Span::styled(branch, Style::default().fg(Color::DarkGray)),
+                Span::styled(branch, Style::default().fg(LIGHT_GRAY)),
                 Span::styled(icon, Style::default().fg(icon_color)),
                 Span::raw(" "),
                 Span::styled(
