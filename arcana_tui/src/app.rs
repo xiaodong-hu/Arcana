@@ -7,6 +7,7 @@ use crate::composer::Composer;
 use crate::config::Config;
 use crate::event::{self, AppEvent, KeyAction, classify_key};
 use crate::overlay::QueryOverlay;
+use crate::panels;
 use crate::status_bar;
 use crate::theme::Theme;
 use crate::tui::Tui;
@@ -66,6 +67,10 @@ impl App {
             KeyAction::ToggleAgents => {
                 self.panel_state.agents_expanded = !self.panel_state.agents_expanded;
             }
+            KeyAction::Expand => {
+                // Ctrl+O: toggle thinking blocks expand/collapse
+                self.viewport.toggle_thinking();
+            }
             KeyAction::Char('?') if self.composer.is_empty() => {
                 self.overlay.show();
                 self.mode = ViewMode::QueryOverlay;
@@ -87,11 +92,8 @@ impl App {
                 self.show_banner = false;
             }
             KeyAction::Enter => {
-                if !self.composer.is_empty() {
-                    let input = self.composer.take_input();
-                    self.viewport.add_user_message(input);
-                    self.show_banner = false;
-                }
+                // Enter is handled in the event loop for LLM dispatch;
+                // this handles the case where composer is empty (no-op)
             }
             KeyAction::Newline => { self.composer.insert_newline(); }
             KeyAction::Backspace => { self.composer.backspace(); }
@@ -178,6 +180,7 @@ impl App {
         let status_h = status_bar::status_bar_height(
             &self.panel_state, &self.skills, &self.agents, &self.tasks,
         );
+        let task_panel_h = panels::task_panel_height(&self.panel_state, &self.tasks);
         let composer_h = self.composer.height();
 
         let chunks = Layout::default()
@@ -186,6 +189,7 @@ impl App {
                 Constraint::Length(banner_h),
                 Constraint::Length(status_h),
                 Constraint::Min(5),
+                Constraint::Length(task_panel_h),
                 Constraint::Length(composer_h),
             ])
             .split(area);
@@ -200,7 +204,10 @@ impl App {
         );
 
         self.viewport.render(frame, chunks[2], &self.theme);
-        self.composer.render(frame, chunks[3], &self.theme);
+
+        panels::render_task_panel(frame, chunks[3], &self.panel_state, &self.tasks);
+
+        self.composer.render(frame, chunks[4], &self.theme);
 
         if self.mode == ViewMode::QueryOverlay {
             self.overlay.render(frame, area, &self.theme);
@@ -260,7 +267,12 @@ pub async fn interactive(
 
     let mut tui = Tui::new()?;
     let mut app = App::new(&config);
-    let mut events = event::spawn_event_reader();
+    let (event_tx, mut events) = event::spawn_event_reader();
+
+    // Conversation history for LLM context
+    let mut conversation: Vec<serde_json::Value> = vec![
+        serde_json::json!({"role": "system", "content": "You are a helpful assistant."})
+    ];
 
     loop {
         tui.draw(|frame| app.render(frame))?;
@@ -270,16 +282,93 @@ pub async fn interactive(
                 AppEvent::Key(key) => {
                     let action = classify_key(&key);
                     match app.mode {
-                        ViewMode::Main => app.handle_main_key(action),
+                        ViewMode::Main => {
+                            // Check if this is an Enter that will send a message
+                            if action == KeyAction::Enter && !app.composer.is_empty() {
+                                let input = app.composer.take_input();
+                                // Handle slash commands
+                                match input.trim() {
+                                    "/quit" | "/q" => { app.should_quit = true; }
+                                    "/clear" => {
+                                        app.viewport.messages.clear();
+                                        conversation.truncate(1); // keep system msg
+                                    }
+                                    "/help" => {
+                                        app.viewport.add_error_message(
+                                            "/quit · /clear · /help · /status\n\
+                                             Ctrl+T tasks · Ctrl+O thinking · Ctrl+D exit".into()
+                                        );
+                                    }
+                                    "/status" => {
+                                        app.viewport.add_error_message(format!(
+                                            "Model: {} │ Tokens: {}/{} │ Tasks: {}",
+                                            app.status.model_name, app.status.tokens_used,
+                                            app.status.tokens_max, app.tasks.len()
+                                        ));
+                                    }
+                                    _ if input.starts_with('/') => {
+                                        app.viewport.add_error_message(
+                                            format!("Unknown command: {}", input.trim())
+                                        );
+                                    }
+                                    _ => {
+                                        // Send to LLM
+                                        app.viewport.add_user_message(input.clone());
+                                        app.viewport.is_streaming = true;
+                                        app.show_banner = false;
+
+                                        conversation.push(serde_json::json!({
+                                            "role": "user", "content": input
+                                        }));
+
+                                        crate::llm::spawn_stream(
+                                            &config, conversation.clone(), event_tx.clone()
+                                        );
+                                    }
+                                }
+                                app.show_banner = false;
+                            } else {
+                                app.handle_main_key(action);
+                            }
+                        }
                         ViewMode::QueryOverlay => app.handle_overlay_key(action),
                         ViewMode::DiffReview => {}
                     }
                 }
                 AppEvent::Resize(_, _) => {}
-                AppEvent::Token(token) => { app.viewport.append_token(&token); }
+                AppEvent::Token(token) => {
+                    // Thinking tokens are prefixed with \x00THINK:
+                    if let Some(think_text) = token.strip_prefix("\x00THINK:") {
+                        app.viewport.append_think_token(think_text);
+                    } else {
+                        app.viewport.append_token(&token);
+                    }
+                }
                 AppEvent::ThinkStart => { app.viewport.start_thinking(); }
                 AppEvent::ThinkEnd => { app.viewport.end_thinking(); }
-                AppEvent::ResponseComplete(stats) => { app.viewport.finalize_response_with_stats(stats); }
+                AppEvent::ResponseComplete(stats) => {
+                    // Store the response in conversation history
+                    let response_text = app.viewport.streaming_text.clone();
+                    let thinking_text = app.viewport.streaming_think
+                        .as_ref().map(|t| t.content.clone());
+
+                    // Update token usage in status
+                    if let Some(s) = &stats {
+                        app.status.tokens_used += s.input_tokens + s.output_tokens;
+                    }
+
+                    app.viewport.finalize_response_with_stats(stats);
+
+                    // Append assistant message to conversation (with reasoning for cache)
+                    let mut msg = serde_json::json!({
+                        "role": "assistant",
+                        "content": response_text
+                    });
+                    if let Some(thinking) = thinking_text {
+                        msg["reasoning_content"] = serde_json::json!(thinking);
+                    }
+                    conversation.push(msg);
+                }
                 AppEvent::LlmError(err) => { app.handle_llm_error(err); }
                 AppEvent::Toast { message, detail } => {
                     app.toasts.push(Toast { message, detail, created_at: chrono::Utc::now() });
@@ -313,7 +402,79 @@ pub async fn single_shot(
     println!("[arcana] Model: {} ({})", model_name, provider_name);
     println!("[arcana] Query: {}", query);
     println!();
-    println!("(Single-shot mode — LLM integration pending)");
+
+    // Resolve API key (env var takes priority over literal "$VAR" in config)
+    let api_key = config.resolve_api_key(provider_name)
+        .ok_or_else(|| format!("No API key found for provider '{}'. Set the appropriate env var.", provider_name))?;
+
+    // Resolve base URL
+    let base_url = match provider_name.as_str() {
+        "deepseek" => {
+            let url = &config.providers.deepseek.base_url;
+            if url.is_empty() { "https://api.deepseek.com".to_string() } else { url.clone() }
+        }
+        "openai" => {
+            let url = &config.providers.openai.base_url;
+            if url.is_empty() { "https://api.openai.com/v1".to_string() } else { url.clone() }
+        }
+        "anthropic" => {
+            let url = &config.providers.anthropic.base_url;
+            if url.is_empty() { "https://api.anthropic.com".to_string() } else { url.clone() }
+        }
+        _ => return Err(format!("Unsupported provider: {}", provider_name).into()),
+    };
+
+    // Build request body
+    let thinking_config = &config.agents.main.thinking;
+    let mut body = serde_json::json!({
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": query}
+        ],
+        "stream": false
+    });
+    if thinking_config.enabled {
+        body["thinking"] = serde_json::json!({"type": "enabled"});
+        body["reasoning_effort"] = serde_json::json!(thinking_config.reasoning_effort);
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/chat/completions", base_url))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&body)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("API error ({}): {}", status, text).into());
+    }
+
+    let data: serde_json::Value = resp.json().await?;
+
+    // Print reasoning if present
+    if let Some(reasoning) = data["choices"][0]["message"]["reasoning_content"].as_str() {
+        if !reasoning.is_empty() {
+            println!("\x1b[2m<thinking>\n{}\n</thinking>\x1b[0m\n", reasoning);
+        }
+    }
+
+    // Print the final answer
+    if let Some(content) = data["choices"][0]["message"]["content"].as_str() {
+        println!("{}", content);
+    }
+
+    // Print usage
+    if let Some(usage) = data.get("usage") {
+        let input = usage["prompt_tokens"].as_u64().unwrap_or(0);
+        let output = usage["completion_tokens"].as_u64().unwrap_or(0);
+        println!("\n\x1b[2m[tokens: {} in / {} out]\x1b[0m", input, output);
+    }
+
     Ok(())
 }
 

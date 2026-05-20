@@ -42,7 +42,7 @@ pub async fn run(args: OnboardArgs) -> Result<(), Box<dyn std::error::Error>> {
         "deepseek" => {
             config.providers.deepseek = ProviderEntry {
                 api_key: api_key.unwrap_or_default(),
-                base_url: "https://api.deepseek.com/beta".into(),
+                base_url: "https://api.deepseek.com".into(),
                 models: vec!["deepseek-v4-pro".into(), "deepseek-v4-flash".into()],
             };
         }
@@ -237,7 +237,57 @@ fn create_global_directory(
     // Write empty tools.toml
     std::fs::write(arcana_home.join("tools.toml"), "# Runtime-registered tools\n")?;
 
+    // Write default authority.toml
+    let authority_toml = r#"# Authority configuration — editable before or after onboard
+# Hot-reloadable: changes take effect immediately
+
+[commands]
+# Shell commands the agent is allowed to execute without confirmation
+allow = [
+    "cargo build",
+    "cargo test",
+    "cargo clippy",
+    "cargo fmt",
+    "git status",
+    "git diff",
+    "git log",
+    "ls",
+    "cat",
+    "find",
+    "grep",
+    "rg",
+]
+
+# Commands that always require confirmation
+confirm = [
+    "git push",
+    "git commit",
+    "rm -rf",
+    "sudo *",
+]
+
+[network]
+# Allowed outbound hosts
+allow = [
+    "api.deepseek.com",
+    "api.openai.com",
+    "api.anthropic.com",
+]
+# Deny all other outbound by default
+deny = ["*"]
+
+[filesystem]
+# Writable paths (relative to project root)
+writable = ["."]
+# Read-only paths
+readonly = ["/etc", "/usr"]
+# Always denied
+deny = ["~/.ssh", "~/.gnupg", "~/.arcana/authority.toml"]
+"#;
+    std::fs::write(arcana_home.join("authority.toml"), authority_toml)?;
+
     println!("  ✓ Created ~/.arcana/config.toml");
+    println!("  ✓ Created ~/.arcana/authority.toml");
     println!("  ✓ Created ~/.arcana/SOUL.md");
     println!("  ✓ Created ~/.arcana/USER.md");
 

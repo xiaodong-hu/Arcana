@@ -274,7 +274,15 @@ impl Config {
             _ => return None,
         };
         if !config_key.is_empty() {
-            return Some(config_key.clone());
+            // Handle $ENV_VAR references in config
+            if config_key.starts_with('$') {
+                let var_name = &config_key[1..];
+                if let Ok(val) = std::env::var(var_name) {
+                    return Some(val);
+                }
+            } else {
+                return Some(config_key.clone());
+            }
         }
         std::env::var(env_var).ok()
     }
