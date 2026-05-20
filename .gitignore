@@ -1,0 +1,22 @@
+# Rust build artifacts
+**/target/
+
+# Cargo lock files for library crates (keep for binaries)
+# Keeping all Cargo.lock for reproducibility in this monorepo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Runtime data (never commit)
+.arcana/
+
+# ONNX models (too large for git)
+*.onnx
