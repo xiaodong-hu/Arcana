@@ -10,6 +10,7 @@ mod llm;
 mod onboard;
 mod overlay;
 mod panels;
+mod render_md;
 mod status_bar;
 mod theme;
 mod tui;

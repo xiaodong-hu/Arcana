@@ -4,44 +4,6 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use crate::theme::Theme;
 use crate::types::{Message, MessageRole, ThinkingBlock};
 
-/// Bleu de France color for inline code highlighting
-const BLEU_DE_FRANCE: Color = Color::Rgb(49, 140, 231); // #318CE7
-
-/// Parse a line of text, highlighting `backtick content` in Bleu de France.
-fn styled_line<'a>(text: &str, base_style: Style) -> Line<'a> {
-    let mut spans: Vec<Span<'a>> = Vec::new();
-    let mut rest = text;
-
-    while let Some(start) = rest.find('`') {
-        // Text before the backtick
-        if start > 0 {
-            spans.push(Span::styled(rest[..start].to_string(), base_style));
-        }
-        let after_tick = &rest[start + 1..];
-        if let Some(end) = after_tick.find('`') {
-            // Found closing backtick
-            let code = &after_tick[..end];
-            spans.push(Span::styled(
-                format!("`{}`", code),
-                Style::default().fg(BLEU_DE_FRANCE),
-            ));
-            rest = &after_tick[end + 1..];
-        } else {
-            // No closing backtick, render rest as-is
-            spans.push(Span::styled(rest[start..].to_string(), base_style));
-            rest = "";
-            break;
-        }
-    }
-    if !rest.is_empty() {
-        spans.push(Span::styled(rest.to_string(), base_style));
-    }
-    if spans.is_empty() {
-        spans.push(Span::styled(String::new(), base_style));
-    }
-    Line::from(spans)
-}
-
 /// Viewport state: manages scroll position and message rendering.
 #[derive(Debug)]
 pub struct Viewport {
@@ -298,11 +260,11 @@ impl Viewport {
                                 ),
                                 Span::styled("ctrl+o to collapse", Style::default().fg(Color::Rgb(160, 160, 170))),
                             ])));
-                            for line in think.content.lines() {
-                                lines.push((msg_idx, styled_line(
-                                    &format!("  {}", line),
-                                    theme.thinking_block,
-                                )));
+                            for md_line in crate::render_md::render_markdown(&think.content, theme.thinking_block) {
+                                // Indent thinking content
+                                let mut spans = vec![Span::raw("  ".to_string())];
+                                spans.extend(md_line.spans);
+                                lines.push((msg_idx, Line::from(spans)));
                             }
                             lines.push((msg_idx, Line::from("")));
                         }
@@ -315,9 +277,9 @@ impl Viewport {
                         lines.push((msg_idx, Line::from(Span::styled(desc, theme.tool_call))));
                     }
 
-                    // Render response content
-                    for line in msg.content.lines() {
-                        lines.push((msg_idx, styled_line(line, theme.agent_response)));
+                    // Render response content with markdown formatting
+                    for md_line in crate::render_md::render_markdown(&msg.content, theme.agent_response) {
+                        lines.push((msg_idx, md_line));
                     }
                     lines.push((msg_idx, Line::from("")));
                 }
@@ -363,8 +325,8 @@ impl Viewport {
             }
 
             if !self.streaming_text.is_empty() {
-                for line in self.streaming_text.lines() {
-                    lines.push((stream_idx, styled_line(line, theme.agent_response)));
+                for md_line in crate::render_md::render_markdown(&self.streaming_text, theme.agent_response) {
+                    lines.push((stream_idx, md_line));
                 }
                 // Add padding so stats have room when they appear
                 for _ in 0..5 {
