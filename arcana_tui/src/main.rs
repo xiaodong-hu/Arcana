@@ -178,6 +178,9 @@ mod auth_cmd {
             "cargo build", "cargo test", "cargo clippy", "cargo fmt",
             "git status", "git diff", "git log",
             "ls", "cat", "find", "grep", "rg",
+            "curl", "wget", "w3m",
+            "python3", "node", "make",
+            "head", "tail", "wc", "sort", "uniq", "sed", "awk", "jq", "tree",
         ].into_iter().map(String::from).collect()
     }
 
@@ -187,8 +190,15 @@ mod auth_cmd {
     }
 
     fn default_network_allow() -> Vec<String> {
-        vec!["api.deepseek.com", "api.openai.com", "api.anthropic.com"]
-            .into_iter().map(String::from).collect()
+        vec![
+            "api.deepseek.com", "api.openai.com", "api.anthropic.com",
+            "scholar.google.com", "arxiv.org", "*.arxiv.org",
+            "en.wikipedia.org", "*.wikipedia.org", "wiki.archlinux.org",
+            "stackoverflow.com", "*.stackoverflow.com", "*.stackexchange.com", "superuser.com",
+            "docs.rs", "crates.io", "github.com", "raw.githubusercontent.com", "gitlab.com",
+            "pkg.go.dev", "pypi.org", "npmjs.com",
+            "zhihu.com", "*.zhihu.com", "juejin.cn",
+        ].into_iter().map(String::from).collect()
     }
 
     fn default_network_deny() -> Vec<String> {

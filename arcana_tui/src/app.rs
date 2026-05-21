@@ -71,9 +71,14 @@ impl App {
                 // Ctrl+O: toggle thinking blocks expand/collapse
                 self.viewport.toggle_thinking();
             }
-            KeyAction::Char('?') if self.composer.is_empty() => {
-                self.overlay.show();
-                self.mode = ViewMode::QueryOverlay;
+            KeyAction::ToggleQuery => {
+                if self.mode == ViewMode::QueryOverlay {
+                    self.overlay.hide();
+                    self.mode = ViewMode::Main;
+                } else {
+                    self.overlay.show();
+                    self.mode = ViewMode::QueryOverlay;
+                }
             }
             KeyAction::Char('j') if self.composer.is_empty() => {
                 self.viewport.scroll_down(1);
@@ -96,7 +101,7 @@ impl App {
                 // this handles the case where composer is empty (no-op)
             }
             KeyAction::Newline => { self.composer.insert_newline(); }
-            KeyAction::Tab => { self.composer.insert_tab(); }
+            KeyAction::Tab => { self.composer.autocomplete_or_tab(); }
             KeyAction::Backspace => { self.composer.backspace(); }
             KeyAction::Delete => { self.composer.delete(); }
             KeyAction::Left => { self.composer.move_left(); }
@@ -129,7 +134,7 @@ impl App {
 
     fn handle_overlay_key(&mut self, action: KeyAction) {
         match action {
-            KeyAction::Escape => {
+            KeyAction::Escape | KeyAction::ToggleQuery => {
                 self.overlay.hide();
                 self.mode = ViewMode::Main;
             }
@@ -285,6 +290,7 @@ pub async fn interactive(
                             if action == KeyAction::Enter && !app.composer.is_empty() {
                                 let input = app.composer.take_input();
                                 // Handle slash commands
+                                let is_command = input.starts_with('/');
                                 match input.trim() {
                                     "/quit" | "/q" => { app.should_quit = true; }
                                     "/clear" => {
@@ -293,8 +299,9 @@ pub async fn interactive(
                                     }
                                     "/help" => {
                                         app.viewport.add_error_message(
-                                            "/quit · /clear · /help · /status · /usage\n\
-                                             Ctrl+T tasks · Ctrl+O thinking · Ctrl+D exit".into()
+                                            "/quit · /clear · /status · /usage · /check\n\
+                                             /auth list|add|remove|edit\n\
+                                             Ctrl+/ query · Ctrl+T tasks · Ctrl+O thinking · Ctrl+D exit".into()
                                         );
                                     }
                                     "/status" => {
@@ -311,6 +318,71 @@ pub async fn interactive(
                                             "Session Usage:\n  Requests: {}\n  Tokens: {} in / {} out\n  Total cost: {:.4}",
                                             app.status.session_requests, in_str, out_str, app.status.session_cost
                                         ));
+                                    }
+                                    "/auth" | "/auth list" => {
+                                        let path = dirs::home_dir().unwrap_or_default().join(".arcana/authority.toml");
+                                        if path.exists() {
+                                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                                app.viewport.add_error_message(format!(
+                                                    "Authority config: {}\n\n{}", path.display(), content
+                                                ));
+                                            }
+                                        } else {
+                                            app.viewport.add_error_message(
+                                                "No authority.toml found. Run: arcana onboard".into()
+                                            );
+                                        }
+                                    }
+                                    cmd if cmd.starts_with("/auth add ") => {
+                                        let pattern = cmd.strip_prefix("/auth add ").unwrap().trim();
+                                        let path = dirs::home_dir().unwrap_or_default().join(".arcana/authority.toml");
+                                        if let Ok(content) = std::fs::read_to_string(&path) {
+                                            // Simple append to [commands] allow list
+                                            let new = content.replace(
+                                                "]\n\n# Commands that always require confirmation",
+                                                &format!("    \"{}\",\n]\n\n# Commands that always require confirmation", pattern)
+                                            );
+                                            let _ = std::fs::write(&path, &new);
+                                            app.viewport.add_error_message(format!("✓ Added to allow: {}", pattern));
+                                        }
+                                    }
+                                    cmd if cmd.starts_with("/auth remove ") => {
+                                        let pattern = cmd.strip_prefix("/auth remove ").unwrap().trim();
+                                        let path = dirs::home_dir().unwrap_or_default().join(".arcana/authority.toml");
+                                        if let Ok(content) = std::fs::read_to_string(&path) {
+                                            let needle = format!("    \"{}\",\n", pattern);
+                                            let new = content.replace(&needle, "");
+                                            let _ = std::fs::write(&path, &new);
+                                            app.viewport.add_error_message(format!("✓ Removed: {}", pattern));
+                                        }
+                                    }
+                                    "/auth edit" => {
+                                        let path = dirs::home_dir().unwrap_or_default().join(".arcana/authority.toml");
+                                        let editor = config.editor.command.clone();
+                                        // Temporarily restore terminal for editor
+                                        let _ = tui.restore();
+                                        let _ = std::process::Command::new(&editor)
+                                            .arg(&path)
+                                            .status();
+                                        tui = crate::tui::Tui::new()?;
+                                        app.viewport.add_error_message(
+                                            format!("Authority config reloaded from {}", path.display())
+                                        );
+                                    }
+                                    "/check" => {
+                                        let home = dirs::home_dir().unwrap_or_default().join(".arcana");
+                                        let mut lines = Vec::new();
+                                        let cfg = home.join("config.toml");
+                                        lines.push(if cfg.exists() { "✓ config.toml" } else { "✗ config.toml (missing)" });
+                                        let auth = home.join("authority.toml");
+                                        lines.push(if auth.exists() { "✓ authority.toml" } else { "✗ authority.toml (missing)" });
+                                        let soul = home.join("SOUL.md");
+                                        lines.push(if soul.exists() { "✓ SOUL.md" } else { "✗ SOUL.md (missing)" });
+                                        let key_ok = std::env::var("DEEPSEEK_API_KEY").is_ok();
+                                        lines.push(if key_ok { "✓ DEEPSEEK_API_KEY (env)" } else { "✗ DEEPSEEK_API_KEY (not set)" });
+                                        app.viewport.add_error_message(
+                                            format!("Health Check:\n  {}", lines.join("\n  "))
+                                        );
                                     }
                                     _ if input.starts_with('/') => {
                                         app.viewport.add_error_message(
@@ -331,6 +403,10 @@ pub async fn interactive(
                                             &config, conversation.clone(), event_tx.clone()
                                         );
                                     }
+                                }
+                                // Add separator after command output
+                                if is_command && input.trim() != "/quit" && input.trim() != "/q" && input.trim() != "/clear" {
+                                    app.viewport.add_separator();
                                 }
                                 app.show_banner = false;
                             } else {
@@ -388,6 +464,7 @@ pub async fn interactive(
                     }
 
                     app.viewport.finalize_response_with_stats(stats);
+                    app.viewport.add_separator();
 
                     // Append assistant message to conversation (with reasoning for cache)
                     let mut msg = serde_json::json!({

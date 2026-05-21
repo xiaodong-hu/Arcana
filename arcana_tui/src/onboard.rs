@@ -256,6 +256,21 @@ allow = [
     "find",
     "grep",
     "rg",
+    "curl",
+    "wget",
+    "w3m",
+    "python3",
+    "node",
+    "make",
+    "head",
+    "tail",
+    "wc",
+    "sort",
+    "uniq",
+    "sed",
+    "awk",
+    "jq",
+    "tree",
 ]
 
 # Commands that always require confirmation
@@ -267,11 +282,38 @@ confirm = [
 ]
 
 [network]
-# Allowed outbound hosts
+# Allowed outbound hosts (API providers + research/documentation)
 allow = [
+    # LLM API providers
     "api.deepseek.com",
     "api.openai.com",
     "api.anthropic.com",
+    # Scholar & research
+    "scholar.google.com",
+    "arxiv.org",
+    "*.arxiv.org",
+    # Wikipedia & wikis
+    "en.wikipedia.org",
+    "*.wikipedia.org",
+    "wiki.archlinux.org",
+    # Programming Q&A
+    "stackoverflow.com",
+    "*.stackoverflow.com",
+    "*.stackexchange.com",
+    "superuser.com",
+    # Code documentation & hosting
+    "docs.rs",
+    "crates.io",
+    "github.com",
+    "raw.githubusercontent.com",
+    "gitlab.com",
+    "pkg.go.dev",
+    "pypi.org",
+    "npmjs.com",
+    # Chinese platforms
+    "zhihu.com",
+    "*.zhihu.com",
+    "juejin.cn",
 ]
 # Deny all other outbound by default
 deny = ["*"]

@@ -180,13 +180,24 @@ impl Viewport {
     pub fn add_error_message(&mut self, content: String) {
         self.messages.push(Message {
             role: MessageRole::System,
-            content: format!("⚠ {}", content),
+            content,
             timestamp: chrono::Utc::now(),
             thinking: None,
             tool_calls: Vec::new(),
         });
         self.auto_scroll = true;
         self.scroll_offset = 0;
+    }
+
+    /// Add a horizontal separator line.
+    pub fn add_separator(&mut self) {
+        self.messages.push(Message {
+            role: MessageRole::System,
+            content: "─".repeat(80),
+            timestamp: chrono::Utc::now(),
+            thinking: None,
+            tool_calls: Vec::new(),
+        });
     }
 
     /// Scroll up by N lines.
@@ -279,21 +290,20 @@ impl Viewport {
                     lines.push(Line::from(""));
                 }
                 MessageRole::System => {
-                    // Stats lines (Cost/Time) use thinking_block style (light gray)
-                    // Other system messages use white
-                    let style = if msg.content.starts_with("Cost:") {
+                    let style = if msg.content.starts_with("Cost:") || msg.content.starts_with('─') {
                         theme.thinking_block
                     } else {
                         Style::default().fg(Color::White)
                     };
-                    // Add blank line before stats
                     if msg.content.starts_with("Cost:") {
                         lines.push(Line::from(""));
                     }
                     for line in msg.content.lines() {
                         lines.push(Line::from(Span::styled(line.to_string(), style)));
                     }
-                    lines.push(Line::from(""));
+                    if !msg.content.starts_with('─') {
+                        lines.push(Line::from(""));
+                    }
                 }
             }
         }

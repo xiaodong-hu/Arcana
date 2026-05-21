@@ -115,6 +115,8 @@ pub enum KeyAction {
     ToggleSkills,
     /// Ctrl+A (toggle agents panel)
     ToggleAgents,
+    /// Ctrl+/ (toggle query overlay)
+    ToggleQuery,
     /// Unknown / unhandled
     None,
 }
@@ -134,6 +136,8 @@ pub fn classify_key(key: &KeyEvent) -> KeyAction {
         (m, KeyCode::Char('t')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleTasks,
         (m, KeyCode::Char('s')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleSkills,
         (m, KeyCode::Char('a')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleAgents,
+        (m, KeyCode::Char('/')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleQuery,
+        (m, KeyCode::Char('_')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleQuery,
         (m, KeyCode::Char('p')) if m.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
             KeyAction::Freeze
         }

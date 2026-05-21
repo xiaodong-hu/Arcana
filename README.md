@@ -276,10 +276,11 @@ arcana resume --last            # Resume previous session
 
 | Key | Action |
 |-----|--------|
+| `Ctrl+/` | Toggle query agent overlay |
 | `Ctrl+T` | Toggle tasks panel |
-| `Ctrl+S` | Toggle skills panel |
-| `Ctrl+A` | Toggle agents panel |
-| `?` | Open query agent overlay |
+| `Ctrl+O` | Toggle thinking chain expand/collapse |
+| `Ctrl+Enter` | Newline in composer |
+| `Tab` | Autocomplete slash command / insert spaces |
 | `Ctrl+C` | Interrupt / clear |
 | `Ctrl+D` | End session |
 | `Ctrl+Shift+P` | Freeze all agents |
