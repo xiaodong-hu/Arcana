@@ -112,6 +112,12 @@ pub enum KeyAction {
     /// Ctrl+Left/Right (word movement)
     WordLeft,
     WordRight,
+    /// Ctrl+w (delete word left)
+    DeleteWordLeft,
+    /// Ctrl+Up (jump to start of input)
+    JumpTop,
+    /// Ctrl+Down (jump to end of input)
+    JumpBottom,
     /// Page navigation
     PageUp,
     PageDown,
@@ -159,6 +165,9 @@ pub fn classify_key(key: &KeyEvent) -> KeyAction {
         (m, KeyCode::Char('\n')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
         (m, KeyCode::Char('\r')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
         (m, KeyCode::Char('o')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Expand,
+        (m, KeyCode::Char('w')) if m.contains(KeyModifiers::CONTROL) => KeyAction::DeleteWordLeft,
+        (m, KeyCode::Char('h')) if m.contains(KeyModifiers::CONTROL) => KeyAction::WordLeft,
+        (m, KeyCode::Char('l')) if m.contains(KeyModifiers::CONTROL) => KeyAction::WordRight,
         (m, KeyCode::Char('g')) if m.contains(KeyModifiers::CONTROL) => KeyAction::OpenEditor,
         (m, KeyCode::Char('e')) if m.contains(KeyModifiers::CONTROL) => KeyAction::OpenEditor,
         (m, KeyCode::Char('t')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleTasks,
@@ -181,6 +190,8 @@ pub fn classify_key(key: &KeyEvent) -> KeyAction {
         (_, KeyCode::Delete) => KeyAction::Delete,
         (_, KeyCode::Esc) => KeyAction::Escape,
         (_, KeyCode::Tab) => KeyAction::Tab,
+        (m, KeyCode::Up) if m.contains(KeyModifiers::CONTROL) => KeyAction::JumpTop,
+        (m, KeyCode::Down) if m.contains(KeyModifiers::CONTROL) => KeyAction::JumpBottom,
         (_, KeyCode::Up) => KeyAction::Up,
         (_, KeyCode::Down) => KeyAction::Down,
         (m, KeyCode::Left) if m.contains(KeyModifiers::CONTROL) => KeyAction::WordLeft,

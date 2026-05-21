@@ -122,14 +122,43 @@ impl Composer {
         }
     }
 
-    /// Move cursor to start of current line.
+    /// Move cursor to start of current line (Home).
     pub fn move_home(&mut self) {
+        let before = &self.input[..self.cursor_pos];
+        self.cursor_pos = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    }
+
+    /// Move cursor to end of current line (End).
+    pub fn move_end(&mut self) {
+        let after = &self.input[self.cursor_pos..];
+        if let Some(nl) = after.find('\n') {
+            self.cursor_pos += nl;
+        } else {
+            self.cursor_pos = self.input.len();
+        }
+    }
+
+    /// Jump to start of entire input (Ctrl+Up).
+    pub fn jump_top(&mut self) {
         self.cursor_pos = 0;
     }
 
-    /// Move cursor to end of input.
-    pub fn move_end(&mut self) {
+    /// Jump to end of entire input (Ctrl+Down).
+    pub fn jump_bottom(&mut self) {
         self.cursor_pos = self.input.len();
+    }
+
+    /// Delete word to the left of cursor (Ctrl+w).
+    pub fn delete_word_left(&mut self) {
+        if self.cursor_pos == 0 { return; }
+        let bytes = self.input.as_bytes();
+        let mut pos = self.cursor_pos;
+        // Skip whitespace backwards
+        while pos > 0 && bytes[pos - 1].is_ascii_whitespace() { pos -= 1; }
+        // Skip word chars backwards
+        while pos > 0 && !bytes[pos - 1].is_ascii_whitespace() { pos -= 1; }
+        self.input.drain(pos..self.cursor_pos);
+        self.cursor_pos = pos;
     }
 
     /// Move cursor left by one word.

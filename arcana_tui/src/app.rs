@@ -116,6 +116,9 @@ impl App {
             KeyAction::Right => { self.composer.move_right(); }
             KeyAction::WordLeft => { self.composer.move_word_left(); }
             KeyAction::WordRight => { self.composer.move_word_right(); }
+            KeyAction::DeleteWordLeft => { self.composer.delete_word_left(); }
+            KeyAction::JumpTop => { self.composer.jump_top(); }
+            KeyAction::JumpBottom => { self.composer.jump_bottom(); }
             KeyAction::Home => { self.composer.move_home(); }
             KeyAction::End => { self.composer.move_end(); }
             KeyAction::Up => {
@@ -320,9 +323,30 @@ pub async fn interactive(
                                     }
                                     "\\help" => {
                                         app.viewport.add_error_message(
-                                            "\\quit · \\clear · \\status · \\usage · \\check\n\
-                                             \\auth list|add|remove|edit\n\
-                                             Ctrl+/ query · Ctrl+t tasks · Ctrl+o thinking · Ctrl+d exit".into()
+"Commands:\n\
+  \\quit          Exit session\n\
+  \\clear         Clear viewport\n\
+  \\status        Show model/token info\n\
+  \\usage         Session token/cost stats\n\
+  \\check         System health check\n\
+  \\auth list     Show authorized commands\n\
+  \\auth add      Add command to allow list\n\
+  \\auth remove   Remove from allow list\n\
+  \\auth edit     Open authority.toml in $EDITOR\n\
+\n\
+Hotkeys:\n\
+  Ctrl+e         Open $EDITOR for prompt\n\
+  Ctrl+/         Toggle query agent\n\
+  Ctrl+o         Expand/collapse thinking chains\n\
+  Ctrl+j/k       Scroll viewport down/up\n\
+  Ctrl+h/l       Move cursor word left/right\n\
+  Ctrl+w         Delete word left\n\
+  Ctrl+Up/Down   Jump to start/end of input\n\
+  Ctrl+Left/Right  Move cursor by word\n\
+  Ctrl+Enter     New line in prompt\n\
+  Home/End       Start/end of current line\n\
+  Ctrl+c         Clear prompt\n\
+  Ctrl+d         Exit session".into()
                                         );
                                     }
                                     "\\status" => {
@@ -443,9 +467,17 @@ pub async fn interactive(
                                 let editor = config.editor.command.clone();
                                 let tmp = std::env::temp_dir().join("arcana_prompt.md");
                                 let _ = std::fs::write(&tmp, &app.composer.input);
+                                // Calculate line:col for cursor positioning
+                                let before = &app.composer.input[..app.composer.cursor_pos];
+                                let line = before.matches('\n').count() + 1;
+                                let col = before.rfind('\n').map(|i| app.composer.cursor_pos - i - 1).unwrap_or(app.composer.cursor_pos) + 1;
                                 event_handle.abort();
                                 tui.restore()?;
-                                let _ = std::process::Command::new(&editor).arg(&tmp).status();
+                                let _ = std::process::Command::new(&editor)
+                                    .arg(format!("+{}", line))
+                                    .arg(&tmp)
+                                    .env("ARCANA_COL", col.to_string())
+                                    .status();
                                 tui = crate::tui::Tui::new()?;
                                 let (tx, rx, handle) = event::spawn_event_reader();
                                 event_tx = tx;
