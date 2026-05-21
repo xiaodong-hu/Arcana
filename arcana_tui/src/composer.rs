@@ -1,5 +1,5 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
@@ -15,6 +15,8 @@ pub struct Composer {
     pub history: Vec<String>,
     /// Current history index
     pub history_index: Option<usize>,
+    /// Saved input before history recall (restored on Down past end)
+    saved_input: String,
     /// Whether the first-use hint should be shown
     pub show_hint: bool,
 }
@@ -26,6 +28,7 @@ impl Default for Composer {
             cursor_pos: 0,
             history: Vec::new(),
             history_index: None,
+            saved_input: String::new(),
             show_hint: true,
         }
     }
@@ -118,23 +121,37 @@ impl Composer {
 
     /// Move cursor to start of current line.
     pub fn move_home(&mut self) {
-        // Find the start of the current line
-        let before = &self.input[..self.cursor_pos];
-        if let Some(nl) = before.rfind('\n') {
-            self.cursor_pos = nl + 1;
-        } else {
-            self.cursor_pos = 0;
-        }
+        self.cursor_pos = 0;
     }
 
-    /// Move cursor to end of current line.
+    /// Move cursor to end of input.
     pub fn move_end(&mut self) {
-        let after = &self.input[self.cursor_pos..];
-        if let Some(nl) = after.find('\n') {
-            self.cursor_pos += nl;
-        } else {
-            self.cursor_pos = self.input.len();
-        }
+        self.cursor_pos = self.input.len();
+    }
+
+    /// Move cursor left by one word.
+    pub fn move_word_left(&mut self) {
+        if self.cursor_pos == 0 { return; }
+        // Skip whitespace backwards
+        let bytes = self.input.as_bytes();
+        let mut pos = self.cursor_pos;
+        while pos > 0 && bytes[pos - 1].is_ascii_whitespace() { pos -= 1; }
+        // Skip word chars backwards
+        while pos > 0 && !bytes[pos - 1].is_ascii_whitespace() { pos -= 1; }
+        self.cursor_pos = pos;
+    }
+
+    /// Move cursor right by one word.
+    pub fn move_word_right(&mut self) {
+        let len = self.input.len();
+        if self.cursor_pos >= len { return; }
+        let bytes = self.input.as_bytes();
+        let mut pos = self.cursor_pos;
+        // Skip current word chars
+        while pos < len && !bytes[pos].is_ascii_whitespace() { pos += 1; }
+        // Skip whitespace
+        while pos < len && bytes[pos].is_ascii_whitespace() { pos += 1; }
+        self.cursor_pos = pos;
     }
 
     /// Move cursor up one line (for multiline input). Returns false if already on first line.
@@ -190,10 +207,12 @@ impl Composer {
         self.history_index = None;
     }
 
-    /// Recall previous message from history.
+    /// Recall previous message from history (Up key).
     pub fn recall_previous(&mut self) {
-        if self.history.is_empty() {
-            return;
+        if self.history.is_empty() { return; }
+        if self.history_index.is_none() {
+            // Save current input before first recall
+            self.saved_input = self.input.clone();
         }
         let idx = match self.history_index {
             None => self.history.len() - 1,
@@ -202,6 +221,25 @@ impl Composer {
         self.history_index = Some(idx);
         self.input = self.history[idx].clone();
         self.cursor_pos = self.input.len();
+    }
+
+    /// Recall next (Down key) — returns to saved input when past end.
+    pub fn recall_next(&mut self) {
+        match self.history_index {
+            None => {} // not in history mode, do nothing
+            Some(idx) => {
+                if idx + 1 >= self.history.len() {
+                    // Past end — restore saved input
+                    self.history_index = None;
+                    self.input = std::mem::take(&mut self.saved_input);
+                    self.cursor_pos = self.input.len();
+                } else {
+                    self.history_index = Some(idx + 1);
+                    self.input = self.history[idx + 1].clone();
+                    self.cursor_pos = self.input.len();
+                }
+            }
+        }
     }
 
     /// Check if the input is empty (ignoring whitespace).
@@ -310,21 +348,24 @@ impl Composer {
             }
         }
 
-        let paragraph = Paragraph::new(lines);
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, inner);
 
-        // Calculate cursor position using unicode width
+        // Calculate cursor position accounting for word wrap
         let (cursor_line, cursor_col) = self.cursor_line_col();
-        // Adjust for the hidden '\\' in command mode
         let adjusted_col = if in_slash_mode && cursor_line == 0 {
-            // cursor_col includes the '/', subtract 1 char width
             cursor_col.saturating_sub(1)
         } else {
             cursor_col
         };
 
-        let cursor_x = inner.x + prompt_width + adjusted_col;
-        let cursor_y = inner.y + cursor_line as u16;
+        // Account for wrapping: if cursor_col + prompt exceeds width, wrap to next visual line
+        let content_width = inner.width.saturating_sub(prompt_width) as u16;
+        let wrap_line_offset = if content_width > 0 { adjusted_col / content_width } else { 0 };
+        let wrap_col = adjusted_col % content_width.max(1);
+
+        let cursor_x = inner.x + prompt_width + wrap_col;
+        let cursor_y = inner.y + cursor_line as u16 + wrap_line_offset;
         frame.set_cursor_position(Position::new(
             cursor_x.min(inner.x + inner.width - 1),
             cursor_y.min(inner.y + inner.height - 1),

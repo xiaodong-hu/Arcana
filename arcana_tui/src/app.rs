@@ -121,22 +121,28 @@ impl App {
             KeyAction::Delete => { self.composer.delete(); }
             KeyAction::Left => { self.composer.move_left(); }
             KeyAction::Right => { self.composer.move_right(); }
+            KeyAction::WordLeft => { self.composer.move_word_left(); }
+            KeyAction::WordRight => { self.composer.move_word_right(); }
+            KeyAction::Home => { self.composer.move_home(); }
+            KeyAction::End => { self.composer.move_end(); }
             KeyAction::Up => {
                 if self.composer.is_empty() {
                     self.composer.recall_previous();
+                } else if self.composer.history_index.is_some() {
+                    self.composer.recall_previous();
                 } else if !self.composer.move_up() {
-                    // Already on first line, do nothing (don't scroll viewport)
+                    // Already on first line, do nothing
                 }
             }
             KeyAction::Down => {
-                if !self.composer.is_empty() {
+                if self.composer.history_index.is_some() {
+                    self.composer.recall_next();
+                } else if !self.composer.is_empty() {
                     self.composer.move_down();
                 }
             }
             KeyAction::PageUp => { self.viewport.scroll_up(20); }
             KeyAction::PageDown => { self.viewport.scroll_down(20); }
-            KeyAction::Home => { self.viewport.scroll_to_top(10000); }
-            KeyAction::End => { self.viewport.scroll_to_bottom(); }
             KeyAction::HalfPageUp => { self.viewport.scroll_up(10); }
             KeyAction::HalfPageDown => { self.viewport.scroll_down(10); }
             KeyAction::Interrupt => {

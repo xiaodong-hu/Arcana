@@ -90,6 +90,9 @@ pub enum KeyAction {
     Down,
     Left,
     Right,
+    /// Ctrl+Left/Right (word movement)
+    WordLeft,
+    WordRight,
     /// Page navigation
     PageUp,
     PageDown,
@@ -160,6 +163,8 @@ pub fn classify_key(key: &KeyEvent) -> KeyAction {
         (_, KeyCode::Tab) => KeyAction::Tab,
         (_, KeyCode::Up) => KeyAction::Up,
         (_, KeyCode::Down) => KeyAction::Down,
+        (m, KeyCode::Left) if m.contains(KeyModifiers::CONTROL) => KeyAction::WordLeft,
+        (m, KeyCode::Right) if m.contains(KeyModifiers::CONTROL) => KeyAction::WordRight,
         (_, KeyCode::Left) => KeyAction::Left,
         (_, KeyCode::Right) => KeyAction::Right,
         (_, KeyCode::PageUp) => KeyAction::PageUp,
