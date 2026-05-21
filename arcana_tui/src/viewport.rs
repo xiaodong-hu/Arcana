@@ -373,12 +373,14 @@ impl Viewport {
         let total_lines = lines.len();
         let visible_height = inner.height as usize;
 
-        let start_line = if self.auto_scroll {
-            total_lines.saturating_sub(visible_height)
-        } else if self.scroll_offset == 0 {
+        // Clamp effective scroll to valid range
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let effective_scroll = self.scroll_offset.min(max_scroll);
+
+        let start_line = if self.auto_scroll || effective_scroll == 0 {
             total_lines.saturating_sub(visible_height)
         } else {
-            total_lines.saturating_sub(visible_height + self.scroll_offset)
+            max_scroll.saturating_sub(effective_scroll)
         };
 
         let visible_lines: Vec<Line> = lines

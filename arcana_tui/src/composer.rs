@@ -362,11 +362,14 @@ impl Composer {
                 };
 
                 let mut spans = Vec::new();
+                let this_prefix_w: u16;
                 if first_chunk {
                     spans.push(Span::styled(line_prefix, line_prefix_style));
+                    this_prefix_w = UnicodeWidthStr::width(line_prefix) as u16;
                     first_chunk = false;
                 } else {
                     spans.push(Span::styled("  ", Style::default())); // wrap continuation
+                    this_prefix_w = 2;
                 }
                 spans.push(Span::styled(chunk.to_string(), content_style));
 
@@ -376,10 +379,7 @@ impl Composer {
                     let chunk_end = char_offset + chunk.len();
                     if cursor_in_display >= chunk_start && cursor_in_display <= chunk_end {
                         let cursor_text = &display_text[chunk_start..cursor_in_display];
-                        cursor_visual_x = prompt_width + UnicodeWidthStr::width(cursor_text) as u16;
-                        if !first_chunk && line_idx > 0 {
-                            // continuation line uses "  " prefix
-                        }
+                        cursor_visual_x = this_prefix_w + UnicodeWidthStr::width(cursor_text) as u16;
                         cursor_visual_y = visual_lines.len() as u16;
                         cursor_found = true;
                     }
