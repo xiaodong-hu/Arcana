@@ -296,9 +296,14 @@ impl Composer {
         let prompt_width = UnicodeWidthStr::width(prompt) as u16;
 
         if self.input.is_empty() && self.show_hint {
+            let hint_text = if self.overlay_mode {
+                "[enter message]"
+            } else {
+                "[type \\ for commands, or enter message]"
+            };
             let line = Line::from(vec![
                 Span::styled(prompt, theme.prompt_glyph),
-                Span::styled("[type \\ for commands, or enter message]", theme.dim),
+                Span::styled(hint_text, theme.dim),
             ]);
             frame.render_widget(Paragraph::new(line), inner);
             frame.set_cursor_position(Position::new(inner.x + prompt_width, inner.y));
