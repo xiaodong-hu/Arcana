@@ -41,7 +41,11 @@ impl Default for QueryOverlay {
         Self {
             visible: false,
             messages: Vec::new(),
-            composer: Composer::new(),
+            composer: {
+                let mut c = Composer::new();
+                c.overlay_mode = true;
+                c
+            },
             scroll_offset: 0,
             is_streaming: false,
             streaming_text: String::new(),

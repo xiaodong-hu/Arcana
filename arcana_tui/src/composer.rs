@@ -17,6 +17,8 @@ pub struct Composer {
     pub history_index: Option<usize>,
     /// Saved input before history recall (restored on Down past end)
     saved_input: String,
+    /// Whether this composer is in overlay (query panel) mode
+    pub overlay_mode: bool,
     /// Whether the first-use hint should be shown
     pub show_hint: bool,
 }
@@ -29,6 +31,7 @@ impl Default for Composer {
             history: Vec::new(),
             history_index: None,
             saved_input: String::new(),
+            overlay_mode: false,
             show_hint: true,
         }
     }
@@ -255,7 +258,9 @@ impl Composer {
     /// Calculate the height needed for the composer.
     pub fn height(&self) -> u16 {
         let lines = self.line_count().min(10) as u16;
-        let hint_lines = if self.input == "\\" { 11 } else { 0 }; // vertical command list
+        let hint_lines = if self.input == "\\" {
+            if self.overlay_mode { 1 } else { 11 }
+        } else { 0 };
         lines + 1 + hint_lines // +1 for top border
     }
 
@@ -332,19 +337,26 @@ impl Composer {
             lines.push(Line::from(spans));
         }
 
-        // Vertical command list when input is just "/"
+        // Vertical command list when input is just "\"
         if in_slash_mode && self.input == "\\" {
             let hint_style = Style::default().fg(Color::Rgb(255, 165, 80));
-            let commands = [
-                "\\quit", "\\help", "\\clear", "\\status",
-                "\\usage", "\\auth list", "\\auth add <cmd>",
-                "\\auth remove <cmd>", "\\auth edit", "\\check", "\\mode",
-            ];
-            for cmd in commands {
+            if self.overlay_mode {
                 lines.push(Line::from(vec![
                     Span::styled("  ", Style::default()),
-                    Span::styled(cmd, hint_style),
+                    Span::styled("\\hide", hint_style),
                 ]));
+            } else {
+                let commands = [
+                    "\\quit", "\\help", "\\clear", "\\status",
+                    "\\usage", "\\auth list", "\\auth add <cmd>",
+                    "\\auth remove <cmd>", "\\auth edit", "\\check", "\\mode",
+                ];
+                for cmd in commands {
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", Style::default()),
+                        Span::styled(cmd, hint_style),
+                    ]));
+                }
             }
         }
 
