@@ -257,7 +257,8 @@ impl Composer {
 
     /// Calculate the height needed for the composer, accounting for word wrap.
     pub fn height_for_width(&self, width: u16) -> u16 {
-        let prompt_w = 2u16; // "❯ " or "\ "
+        let max_lines = 10u16; // will be clamped by caller to half window
+        let prompt_w = 2u16;
         let avail_w = width.saturating_sub(prompt_w).max(1) as usize;
         let display = if !self.overlay_mode && self.input.starts_with('\\') { &self.input[1..] } else { &self.input };
         let logical_lines: Vec<&str> = if display.is_empty() { vec![""] } else { display.split('\n').collect() };
@@ -267,7 +268,7 @@ impl Composer {
             visual_lines += ((w / avail_w) + 1) as u16;
         }
         let hint_lines: u16 = if !self.overlay_mode && self.input == "\\" { 11 } else { 0 };
-        visual_lines.min(10) + 1 + hint_lines // +1 for top border
+        visual_lines.min(max_lines) + 1 + hint_lines // +1 for top border
     }
 
     /// Fallback height (no width info).

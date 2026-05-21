@@ -205,7 +205,7 @@ impl App {
             &self.panel_state, &self.skills, &self.agents, &self.tasks,
         );
         let task_panel_h = panels::task_panel_height(&self.panel_state, &self.tasks);
-        let composer_h = self.composer.height_for_width(area.width);
+        let composer_h = self.composer.height_for_width(area.width).min(area.height / 2);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -438,6 +438,26 @@ pub async fn interactive(
                                     app.viewport.add_separator();
                                 }
                                 app.show_banner = false;
+                            } else if action == KeyAction::OpenEditor {
+                                // Ctrl+e: open $EDITOR for prompt editing
+                                let editor = config.editor.command.clone();
+                                let tmp = std::env::temp_dir().join("arcana_prompt.md");
+                                let _ = std::fs::write(&tmp, &app.composer.input);
+                                event_handle.abort();
+                                tui.restore()?;
+                                let _ = std::process::Command::new(&editor).arg(&tmp).status();
+                                tui = crate::tui::Tui::new()?;
+                                let (tx, rx, handle) = event::spawn_event_reader();
+                                event_tx = tx;
+                                events = rx;
+                                event_handle = handle;
+                                // Load edited content back
+                                if let Ok(content) = std::fs::read_to_string(&tmp) {
+                                    app.composer.input = content;
+                                    app.composer.cursor_pos = app.composer.input.len();
+                                    app.composer.show_hint = false;
+                                }
+                                let _ = std::fs::remove_file(&tmp);
                             } else {
                                 app.handle_main_key(action);
                             }
@@ -467,18 +487,17 @@ pub async fn interactive(
                     }
                 }
                 AppEvent::Paste(text) => {
+                    // Insert pasted text directly preserving all formatting
                     let composer = if app.mode == ViewMode::QueryOverlay {
                         &mut app.overlay.composer
                     } else {
                         &mut app.composer
                     };
-                    for ch in text.chars() {
-                        if ch == '\n' {
-                            composer.insert_newline();
-                        } else if ch != '\r' {
-                            composer.insert_char(ch);
-                        }
-                    }
+                    // Normalize line endings and insert as block
+                    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                    composer.input.insert_str(composer.cursor_pos, &normalized);
+                    composer.cursor_pos += normalized.len();
+                    composer.show_hint = false;
                     app.show_banner = false;
                 }
                 AppEvent::ScrollUp(n) => { app.viewport.scroll_up(n as usize); }

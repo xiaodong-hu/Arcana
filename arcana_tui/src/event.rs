@@ -162,6 +162,7 @@ pub fn classify_key(key: &KeyEvent) -> KeyAction {
         (m, KeyCode::Char('\r')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
         (m, KeyCode::Char('o')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Expand,
         (m, KeyCode::Char('g')) if m.contains(KeyModifiers::CONTROL) => KeyAction::OpenEditor,
+        (m, KeyCode::Char('e')) if m.contains(KeyModifiers::CONTROL) => KeyAction::OpenEditor,
         (m, KeyCode::Char('t')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleTasks,
         (m, KeyCode::Char('s')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleSkills,
         (m, KeyCode::Char('a')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleAgents,
