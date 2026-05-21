@@ -269,20 +269,12 @@ impl Viewport {
                 focused_start_line = Some(lines.len());
             }
 
-            let is_focused = focused_dialogue.is_some_and(|f| {
-                msg_idx == f || (msg_idx > f && msg_idx <= f + 2
-                    && self.messages.get(f).is_some_and(|m| m.role == MessageRole::User))
-            });
-
             match msg.role {
                 MessageRole::User => {
-                    let mut spans = vec![
+                    let spans = vec![
                         Span::styled("❯ ", theme.prompt_glyph),
                         Span::styled(&msg.content, theme.user_message),
                     ];
-                    if is_focused {
-                        spans.insert(0, Span::styled("┃ ", Style::default().fg(FOCUS_GREEN)));
-                    }
                     lines.push((msg_idx, Line::from(spans)));
                     lines.push((msg_idx, Line::from("")));
                 }
@@ -397,7 +389,24 @@ impl Viewport {
             .into_iter()
             .skip(start_line)
             .take(visible_height)
-            .map(|(_, line)| line)
+            .map(|(msg_idx, line)| {
+                // Prepend green focus bar for all lines in the focused dialogue
+                let in_focus = focused_dialogue.is_some_and(|f| {
+                    if msg_idx < f { return false; }
+                    let next_user = self.messages[f + 1..].iter()
+                        .position(|m| m.role == MessageRole::User)
+                        .map(|p| f + 1 + p)
+                        .unwrap_or(self.messages.len());
+                    msg_idx >= f && msg_idx < next_user
+                });
+                if in_focus {
+                    let mut spans = vec![Span::styled("┃ ", Style::default().fg(FOCUS_GREEN))];
+                    spans.extend(line.spans);
+                    Line::from(spans)
+                } else {
+                    line
+                }
+            })
             .collect();
 
         let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });

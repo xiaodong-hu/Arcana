@@ -77,32 +77,14 @@ impl App {
                 }
             }
             KeyAction::FocusDown => {
-                // Ctrl+j: move focus to next dialogue
-                let dialogues = self.viewport.dialogue_indices();
-                if dialogues.is_empty() { return; }
-                let next = match self.focused_dialogue {
-                    None => dialogues[0],
-                    Some(cur) => {
-                        let pos = dialogues.iter().position(|&i| i == cur).unwrap_or(0);
-                        dialogues[(pos + 1).min(dialogues.len() - 1)]
-                    }
-                };
-                self.focused_dialogue = Some(next);
-                self.viewport.scroll_to_dialogue(next);
+                // Ctrl+j: scroll viewport down
+                self.viewport.scroll_down(3);
+                self.focused_dialogue = None; // will be determined by visible content
             }
             KeyAction::FocusUp => {
-                // Ctrl+k: move focus to previous dialogue
-                let dialogues = self.viewport.dialogue_indices();
-                if dialogues.is_empty() { return; }
-                let prev = match self.focused_dialogue {
-                    None => *dialogues.last().unwrap(),
-                    Some(cur) => {
-                        let pos = dialogues.iter().position(|&i| i == cur).unwrap_or(0);
-                        dialogues[pos.saturating_sub(1)]
-                    }
-                };
-                self.focused_dialogue = Some(prev);
-                self.viewport.scroll_to_dialogue(prev);
+                // Ctrl+k: scroll viewport up
+                self.viewport.scroll_up(3);
+                self.focused_dialogue = None;
             }
             KeyAction::ToggleQuery => {
                 if self.mode == ViewMode::QueryOverlay {
@@ -140,10 +122,17 @@ impl App {
             KeyAction::Left => { self.composer.move_left(); }
             KeyAction::Right => { self.composer.move_right(); }
             KeyAction::Up => {
-                if self.composer.is_empty() { self.composer.recall_previous(); }
-                else { self.viewport.scroll_up(1); }
+                if self.composer.is_empty() {
+                    self.composer.recall_previous();
+                } else if !self.composer.move_up() {
+                    // Already on first line, do nothing (don't scroll viewport)
+                }
             }
-            KeyAction::Down => { self.viewport.scroll_down(1); }
+            KeyAction::Down => {
+                if !self.composer.is_empty() {
+                    self.composer.move_down();
+                }
+            }
             KeyAction::PageUp => { self.viewport.scroll_up(20); }
             KeyAction::PageDown => { self.viewport.scroll_down(20); }
             KeyAction::Home => { self.viewport.scroll_to_top(10000); }
@@ -435,6 +424,8 @@ pub async fn interactive(
                                         app.viewport.add_user_message(input.clone());
                                         app.viewport.is_streaming = true;
                                         app.show_banner = false;
+                                        // Focus the new dialogue
+                                        app.focused_dialogue = Some(app.viewport.messages.len() - 1);
 
                                         conversation.push(serde_json::json!({
                                             "role": "user", "content": input

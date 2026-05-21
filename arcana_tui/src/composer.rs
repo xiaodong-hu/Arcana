@@ -137,6 +137,41 @@ impl Composer {
         }
     }
 
+    /// Move cursor up one line (for multiline input). Returns false if already on first line.
+    pub fn move_up(&mut self) -> bool {
+        let before = &self.input[..self.cursor_pos];
+        let cur_line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        if cur_line_start == 0 {
+            return false; // already on first line
+        }
+        let col = self.cursor_pos - cur_line_start;
+        // Find previous line start
+        let prev_line_start = self.input[..cur_line_start - 1].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let prev_line_len = cur_line_start - 1 - prev_line_start;
+        self.cursor_pos = prev_line_start + col.min(prev_line_len);
+        true
+    }
+
+    /// Move cursor down one line (for multiline input). Returns false if already on last line.
+    pub fn move_down(&mut self) -> bool {
+        let after = &self.input[self.cursor_pos..];
+        let before = &self.input[..self.cursor_pos];
+        let cur_line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let col = self.cursor_pos - cur_line_start;
+        // Find next newline
+        if let Some(nl) = after.find('\n') {
+            let next_line_start = self.cursor_pos + nl + 1;
+            let next_line_end = self.input[next_line_start..].find('\n')
+                .map(|i| next_line_start + i)
+                .unwrap_or(self.input.len());
+            let next_line_len = next_line_end - next_line_start;
+            self.cursor_pos = next_line_start + col.min(next_line_len);
+            true
+        } else {
+            false // already on last line
+        }
+    }
+
     /// Take the current input (consume it) and add to history.
     pub fn take_input(&mut self) -> String {
         let input = std::mem::take(&mut self.input);
@@ -176,7 +211,7 @@ impl Composer {
 
     /// Get the number of lines in the input.
     pub fn line_count(&self) -> usize {
-        if self.input.is_empty() { 1 } else { self.input.lines().count().max(1) }
+        if self.input.is_empty() { 1 } else { self.input.split('\n').count() }
     }
 
     /// Calculate the height needed for the composer.
