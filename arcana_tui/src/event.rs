@@ -66,10 +66,10 @@ pub fn spawn_event_reader() -> (mpsc::UnboundedSender<AppEvent>, mpsc::Unbounded
                     Ok(CrosstermEvent::Mouse(MouseEvent { kind, .. })) => {
                         match kind {
                             MouseEventKind::ScrollUp => {
-                                let _ = tx2.send(AppEvent::ScrollUp(3));
+                                let _ = tx2.send(AppEvent::ScrollUp(1));
                             }
                             MouseEventKind::ScrollDown => {
-                                let _ = tx2.send(AppEvent::ScrollDown(3));
+                                let _ = tx2.send(AppEvent::ScrollDown(1));
                             }
                             _ => {}
                         }

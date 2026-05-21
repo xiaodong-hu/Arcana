@@ -257,7 +257,7 @@ impl Viewport {
     }
 
     /// Render the viewport into the given area.
-    pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let block = Block::default().borders(Borders::NONE);
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -377,14 +377,16 @@ impl Viewport {
         let total_lines = lines.len();
         let visible_height = inner.height as usize;
 
-        // Clamp effective scroll to valid range
+        // Clamp and apply scroll
         let max_scroll = total_lines.saturating_sub(visible_height);
-        let effective_scroll = self.scroll_offset.min(max_scroll);
+        if self.scroll_offset > max_scroll {
+            self.scroll_offset = max_scroll;
+        }
 
-        let start_line = if self.auto_scroll || effective_scroll == 0 {
+        let start_line = if self.auto_scroll {
             total_lines.saturating_sub(visible_height)
         } else {
-            max_scroll.saturating_sub(effective_scroll)
+            max_scroll.saturating_sub(self.scroll_offset)
         };
 
         let visible_lines: Vec<Line> = lines
