@@ -453,9 +453,11 @@ pub async fn interactive(
                                 event_handle = handle;
                                 // Load edited content back
                                 if let Ok(content) = std::fs::read_to_string(&tmp) {
+                                    let content = content.trim_end_matches('\n').to_string();
                                     app.composer.input = content;
                                     app.composer.cursor_pos = app.composer.input.len();
                                     app.composer.show_hint = false;
+                                    app.composer.history_index = None;
                                 }
                                 let _ = std::fs::remove_file(&tmp);
                             } else {
