@@ -75,75 +75,13 @@ Every existing coding agent is a **stateless parrot** — it forgets everything 
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Agent Hierarchy
-
-```
-                    ┌──────────────────┐
-                    │    Main Agent    │  ← deepseek-v4-pro (configurable)
-                    │  plans, reasons  │
-                    └────────┬─────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-     ┌────────▼───┐  ┌──────▼─────┐  ┌────▼────────┐
-     │Query Agent │  │ Sub-Agent  │  │ Sub-Agent   │  ← deepseek-v4-flash
-     │(persistent)│  │ (spawned)  │  │ (spawned)   │    (configurable)
-     │ shares ctx │  │ scoped fs  │  │ scoped fs   │
-     └────────────┘  └────────────┘  └─────────────┘
-```
-
-### Data Flow
-
-```
-User Input ──► Skill Triggers ──► Main Agent ──► Authority Gate ──► File System
-                                       │                │
-                                       │           git_record/
-                                       │          (every mutation)
-                                       ▼
-                                  Memory Store
-                              (knowledge, errors,
-                               session history)
-```
-
 ---
 
 ## Features
 
-### Hybrid LLM Configuration
+### 1. Rust-Hosted Strict Authority & Recording System
 
-Assign different models to different roles. Use your most powerful model where it matters, cheap models where it doesn't:
-
-```toml
-[agents.main]
-provider = "deepseek"
-model = "deepseek-v4-pro"
-
-[agents.main.thinking]
-enabled = true
-reasoning_effort = "max"
-
-[agents.query]
-provider = "deepseek"
-model = "deepseek-v4-pro"
-
-[agents.main.thinking]
-enabled = true
-reasoning_effort = "high"
-
-
-[agents.sub]
-provider = "deepseek"
-model = "deepseek-v4-flash"    # Fast & cheap for parallel work
-
-[agents.main.thinking]
-enabled = true
-reasoning_effort = "high"
-
-```
-
-### Authority & Recording
-
-Every file mutation and system command is gated and recorded. Full git-like history of agent actions:
+Every file mutation and system command is gated and recorded. Full git-like history of agent actions. **The agent cannot ruin your project** — every change is recoverable.
 
 ```
 .arcana/git_record/
@@ -157,73 +95,48 @@ Recover any state: `arcana recover . --to-seq 42`
 
 #### Command Authorization
 
-The agent cannot execute system calls or network commands without explicit authorization. Authorized commands are managed via config or CLI:
-
 ```toml
 # ~/.arcana/authority.toml — editable before or after onboard
 [commands]
-# Shell commands the agent is allowed to execute without confirmation
 allow = [
-    "cargo build",
-    "cargo test",
-    "cargo clippy",
-    "git status",
-    "git diff",
-    "git log",
-    "ls",
-    "cat",
-    "find",
-    "grep",
-    "rg",
+    "cargo build", "cargo test", "cargo clippy", "cargo fmt",
+    "git status", "git diff", "git log",
+    "ls", "cat", "find", "grep", "rg",
+    "curl", "wget", "w3m", "python3", "node",
 ]
 
-# Commands that always require confirmation (even if pattern-matched above)
-confirm = [
-    "git push",
-    "git commit",
-    "rm -rf",
-    "sudo *",
-]
+confirm = ["git push", "git commit", "rm -rf", "sudo *"]
 
-# Network access rules
 [network]
 allow = [
-    "api.deepseek.com",
-    "api.openai.com",
-    "api.anthropic.com",
+    "api.deepseek.com", "api.openai.com", "api.anthropic.com",
+    "scholar.google.com", "arxiv.org", "*.arxiv.org",
+    "en.wikipedia.org", "*.wikipedia.org", "wiki.archlinux.org",
+    "stackoverflow.com", "*.stackoverflow.com", "*.stackexchange.com",
+    "docs.rs", "crates.io", "github.com", "gitlab.com",
+    "zhihu.com", "*.zhihu.com",
 ]
-deny = ["*"]  # deny all other outbound by default
+deny = ["*"]
 
-# File system scope (relative to project root)
 [filesystem]
-writable = ["."]           # project root
+writable = ["."]
 readonly = ["/etc", "/usr"]
 deny = ["~/.ssh", "~/.gnupg", "~/.arcana/authority.toml"]
 ```
 
-Manage at runtime:
+Runtime management: `\auth list|add|remove|edit`
 
-```bash
-arcana auth status              # Show all authorized commands/network/fs rules
-arcana auth allow "cargo fmt"   # Add a command to the allow list
-arcana auth deny "rm -rf /"     # Add to deny list
-arcana auth revoke "git push"   # Remove from allow list
-arcana auth reset               # Reset to defaults
-```
+---
 
-The authority config is hot-reloadable — edit `~/.arcana/authority.toml` and changes take effect immediately, just like skill modules.
+### 2. Hot-Plug Multilayer Skill Module System
 
-### Persistent Memory
+Skills operate at three levels, all hot-loadable:
 
-Knowledge survives across sessions. The agent learns your codebase, your patterns, your mistakes:
-
-- **Knowledge store** — semantic search over accumulated project understanding
-- **Error patterns** — never repeat the same mistake twice
-- **Session memory** — resume exactly where you left off
-
-### Composable Skills
-
-Hot-loadable, trigger-based skill modules:
+| Level | Scope | Modifiable by | Description |
+|-------|-------|---------------|-------------|
+| **System (immutable)** | All projects, all sessions | Nobody (hardcoded) | Core agent behavior, safety constraints |
+| **System (evolvable)** | All projects, all sessions | LLM + Human | Self-improving skills the agent updates over time |
+| **Project (user)** | Per-project | Human | Custom triggers, workflows, domain knowledge |
 
 ```toml
 # ~/.arcana/skills/user/my-skill/manifest.toml
@@ -233,13 +146,123 @@ trigger = { pattern = "deploy|ship|release" }
 mode = "inject"    # inject context when triggered
 ```
 
-### Per-Response Telemetry
+All skills are hot-reloadable — add/remove/modify without restarting.
+
+---
+
+### 3. Multistage Memory System
+
+Memory persists across sessions with multiple layers:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Long-term Persistent Vector DB (cross-project)     │
+│  • Knowledge store (semantic search)                │
+│  • Error patterns (never repeat mistakes)           │
+│  • Thinking chain archive (cross-session recall)    │
+│  • Queryable and editable by users                  │
+├─────────────────────────────────────────────────────┤
+│  Session-level Short-term Vector DB                 │
+│  • Current conversation context                     │
+│  • Reasoning chains (for DeepSeek cache hits)       │
+│  • Tool call results                                │
+├─────────────────────────────────────────────────────┤
+│  Project-level Squeezed Markdown Memory             │
+│  • PROJECT.md (editable by users)                   │
+│  • Auto-generated summaries                         │
+│  • Codebase understanding                           │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+### 4. Orchestrated Sub-Agents
+
+Checkpointed, freezable, resumable sub-agents to save tokens:
+
+```
+                    ┌──────────────────┐
+                    │    Main Agent    │  ← deepseek-v4-pro
+                    │  plans, reasons  │
+                    └────────┬─────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+     ┌────────▼───┐  ┌──────▼─────┐  ┌────▼────────┐
+     │Query Agent │  │ Sub-Agent  │  │ Sub-Agent   │  ← deepseek-v4-flash
+     │(persistent)│  │ (spawned)  │  │ (spawned)   │
+     │ shares ctx │  │ scoped fs  │  │ scoped fs   │
+     └────────────┘  └────────────┘  └─────────────┘
+```
+
+- Sub-agents cannot spawn further sub-agents (authority constraint)
+- Each sub-agent has scoped filesystem access
+- Checkpointable: freeze mid-task, resume later
+- Query agent: persistent overlay via `Ctrl+/`
+
+---
+
+### 5. Hybrid LLM Configuration
+
+Assign different models to different roles:
+
+```toml
+[agents.main]
+provider = "deepseek"
+model = "deepseek-v4-pro"
+
+[agents.main.thinking]
+enabled = true
+reasoning_effort = "high"
+
+[agents.query]
+provider = "deepseek"
+model = "deepseek-v4-pro"
+
+[agents.sub]
+provider = "deepseek"
+model = "deepseek-v4-flash"    # Fast & cheap for parallel work
+```
+
+---
+
+### 6. Per-Response Telemetry
 
 Every LLM response shows exactly what it cost:
 
 ```
-Expense: 0.0031 ( 1.2K in / 847 out )
+Cost: 0.0031 ( 1.2K in / 847 out )
 Time: 2.4s
+```
+
+---
+
+## Editor ↔ Agent Operation Flow
+
+Arcana integrates seamlessly with your `$EDITOR` (neovim, vim, vscode):
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Prompt Panel (TUI)                                      │
+│  ❯ type here, or press Ctrl+e to open $EDITOR           │
+│                                                          │
+│  ┌─── Ctrl+e ───►  $EDITOR (full editing power)         │
+│  │                  • vim motions, plugins, LSP          │
+│  │                  • paste large code blocks            │
+│  │                  • :wq to return                      │
+│  │◄── :wq ──────   content flushed back to prompt       │
+│  │                                                       │
+│  │  Continue editing in prompt, or Enter to send         │
+│  └───────────────────────────────────────────────────────│
+│                                                          │
+│  Diff Review (on file mutations):                        │
+│  • Full unified diff display                             │
+│  • Accept / Edit in $EDITOR / Reject                     │
+│  • Human can modify LLM's proposed changes               │
+│                                                          │
+│  Authority Approval (on restricted operations):          │
+│  • Single permission / Trust session / Interrupt / Reject│
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -277,14 +300,32 @@ arcana resume --last            # Resume previous session
 | Key | Action |
 |-----|--------|
 | `Ctrl+/` | Toggle query agent overlay |
-| `Ctrl+t` | Toggle tasks panel |
+| `Ctrl+e` | Open `$EDITOR` for prompt editing |
+| `Ctrl+b` | Stop LLM generation immediately |
 | `Ctrl+o` | Toggle thinking chain expand/collapse |
-| `Ctrl+Enter` | Newline in composer (also `Ctrl+j`, `Shift+Enter`) |
+| `Ctrl+j` / `Ctrl+k` | Scroll viewport down/up |
+| `Ctrl+Enter` | Newline in composer (also `Shift+Enter`) |
+| `Ctrl+w` | Delete word left |
+| `Ctrl+h` / `Ctrl+l` | Move cursor word left/right |
+| `Ctrl+Up` / `Ctrl+Down` | Jump to start/end of input |
+| `Home` / `End` | Start/end of current line |
 | `Tab` | Autocomplete command / insert spaces |
 | `Ctrl+c` | Interrupt / clear composer |
-| `Ctrl+d` | End session |
-| `Ctrl+g` | Open `$EDITOR` |
-| `Ctrl+Shift+p` | Freeze all agents |
+
+### TUI Commands (prefix: `\`)
+
+| Command | Action |
+|---------|--------|
+| `\quit` | Exit session |
+| `\clear` | Clear viewport |
+| `\status` | Show model/token info |
+| `\usage` | Session token/cost statistics |
+| `\check` | System health check |
+| `\auth list` | Show authorized commands |
+| `\auth add <cmd>` | Add to allow list |
+| `\auth remove <cmd>` | Remove from allow list |
+| `\auth edit` | Open authority.toml in `$EDITOR` |
+| `\help` | Show all commands and hotkeys |
 
 ---
 
@@ -297,8 +338,6 @@ arcana config show    # Print current config
 arcana config edit    # Open in $EDITOR
 arcana config path    # Print file path
 ```
-
-See [doc/agent_usage.md](doc/agent_usage.md) §7 for the full configuration reference.
 
 ---
 
@@ -315,7 +354,8 @@ Arcana-Agent/
 └── doc/                     # Design documents
     ├── agent_usage.md       # User manual
     ├── tui_design.md        # TUI architecture
-    ├── agent_running_design.md        # Agent runtime design
+    ├── context_design.md    # LLM context harness design
+    ├── human_in_loop_design.md  # Human-in-loop interaction design
     └── authority_and_recording_design.md  # Authority system design
 ```
 
@@ -330,17 +370,6 @@ Arcana-Agent/
 3. **Composition over monoliths.** Skills, sub-agents, and memory layers are independent, hot-swappable modules communicating over unix sockets.
 
 4. **Transparency over magic.** Every token spent, every file touched, every decision made — visible, recorded, recoverable.
-
----
-
-## Documentation
-
-| Document | Contents |
-|----------|----------|
-| [Agent Usage Manual](doc/agent_usage.md) | CLI commands, keybindings, configuration, workflows |
-| [TUI Design](doc/tui_design.md) | Terminal interface architecture, rendering, streaming |
-| [Agent Runtime](doc/agent_running_design.md) | Agent lifecycle, context management, LLM integration |
-| [Authority & Recording](doc/authority_and_recording_design.md) | Permission system, mutation recording, crash recovery |
 
 ---
 

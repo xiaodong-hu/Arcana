@@ -129,8 +129,8 @@ pub enum KeyAction {
     HalfPageDown,
     /// Ctrl+C (interrupt)
     Interrupt,
-    /// Ctrl+D (end session)
-    EndSession,
+    /// Ctrl+B (break/stop LLM generation)
+    BreakGeneration,
     /// Ctrl+Shift+P (freeze)
     Freeze,
     /// Ctrl+O (expand)
@@ -158,7 +158,7 @@ pub fn classify_key(key: &KeyEvent) -> KeyAction {
     match (key.modifiers, key.code) {
         // Ctrl combinations
         (m, KeyCode::Char('c')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Interrupt,
-        (m, KeyCode::Char('d')) if m.contains(KeyModifiers::CONTROL) => KeyAction::EndSession,
+        (m, KeyCode::Char('b')) if m.contains(KeyModifiers::CONTROL) => KeyAction::BreakGeneration,
         (m, KeyCode::Char('u')) if m.contains(KeyModifiers::CONTROL) => KeyAction::HalfPageUp,
         (m, KeyCode::Char('j')) if m.contains(KeyModifiers::CONTROL) => KeyAction::FocusDown,
         (m, KeyCode::Char('k')) if m.contains(KeyModifiers::CONTROL) => KeyAction::FocusUp,

@@ -144,7 +144,15 @@ impl App {
             KeyAction::Interrupt => {
                 if !self.composer.is_empty() { self.composer.clear(); }
             }
-            KeyAction::EndSession => { self.should_quit = true; }
+            KeyAction::BreakGeneration => {
+                // Stop LLM generation immediately
+                if self.viewport.is_streaming {
+                    self.viewport.is_streaming = false;
+                    // Finalize whatever we have so far
+                    self.viewport.finalize_response_with_stats(None);
+                    self.viewport.add_separator();
+                }
+            }
             KeyAction::Freeze => {
                 self.toasts.push(Toast {
                     message: "Session frozen".into(),
@@ -345,8 +353,9 @@ Hotkeys:\n\
   Ctrl+Left/Right  Move cursor by word\n\
   Ctrl+Enter     New line in prompt\n\
   Home/End       Start/end of current line\n\
+  Ctrl+b         Stop LLM generation\n\
   Ctrl+c         Clear prompt\n\
-  Ctrl+d         Exit session".into()
+  \\quit          Exit session".into()
                                         );
                                     }
                                     "\\status" => {
