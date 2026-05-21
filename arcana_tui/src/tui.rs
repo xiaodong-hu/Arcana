@@ -1,10 +1,6 @@
 use crossterm::{
     execute,
-    event::{
-        EnableBracketedPaste, DisableBracketedPaste,
-        EnableMouseCapture, DisableMouseCapture,
-        KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    },
+    event::{EnableBracketedPaste, DisableBracketedPaste, EnableMouseCapture, DisableMouseCapture},
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
@@ -13,7 +9,6 @@ use std::io::{self, stdout};
 /// Terminal wrapper that manages raw mode and alternate screen.
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
-    keyboard_enhanced: bool,
 }
 
 impl Tui {
@@ -21,18 +16,9 @@ impl Tui {
     pub fn new() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
         execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
-
-        // Try to enable kitty keyboard protocol for proper Ctrl+Enter
-        let keyboard_enhanced = execute!(
-            stdout(),
-            PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-            )
-        ).is_ok();
-
         let backend = CrosstermBackend::new(stdout());
         let terminal = Terminal::new(backend)?;
-        Ok(Self { terminal, keyboard_enhanced })
+        Ok(Self { terminal })
     }
 
     /// Draw a frame.
@@ -46,9 +32,6 @@ impl Tui {
 
     /// Restore the terminal to its original state.
     pub fn restore(&mut self) -> io::Result<()> {
-        if self.keyboard_enhanced {
-            let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
-        }
         terminal::disable_raw_mode()?;
         execute!(self.terminal.backend_mut(), DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen)?;
         Ok(())
