@@ -212,7 +212,7 @@ impl App {
             &self.panel_state, &self.skills, &self.agents, &self.tasks,
         );
         let task_panel_h = panels::task_panel_height(&self.panel_state, &self.tasks);
-        let composer_h = self.composer.height();
+        let composer_h = self.composer.height_for_width(area.width);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)

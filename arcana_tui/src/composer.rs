@@ -255,13 +255,27 @@ impl Composer {
         if self.input.is_empty() { 1 } else { self.input.split('\n').count() }
     }
 
-    /// Calculate the height needed for the composer.
-    pub fn height(&self) -> u16 {
-        let lines = self.line_count().min(10) as u16;
+    /// Calculate the height needed for the composer, accounting for word wrap.
+    /// `width` is the available content width (terminal width minus prompt and borders).
+    pub fn height_for_width(&self, width: u16) -> u16 {
+        let prompt_w = 2u16; // "❯ " or "\ "
+        let content_w = width.saturating_sub(prompt_w).max(1) as usize;
+        let mut visual_lines: u16 = 0;
+        let display = if self.input.starts_with('\\') { &self.input[1..] } else { &self.input };
+        let text_lines: Vec<&str> = if display.is_empty() { vec![""] } else { display.split('\n').collect() };
+        for line in &text_lines {
+            let line_w = UnicodeWidthStr::width(*line);
+            visual_lines += ((line_w / content_w) + 1) as u16;
+        }
         let hint_lines = if self.input == "\\" {
             if self.overlay_mode { 1 } else { 11 }
         } else { 0 };
-        lines + 1 + hint_lines // +1 for top border
+        visual_lines.min(10) + 1 + hint_lines // +1 for top border
+    }
+
+    /// Fallback height (no width info).
+    pub fn height(&self) -> u16 {
+        self.height_for_width(80)
     }
 
     /// Get the current line and column (visual width) of the cursor.
