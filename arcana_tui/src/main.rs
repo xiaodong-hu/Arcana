@@ -7,6 +7,7 @@ mod config;
 mod diff_panel;
 mod event;
 mod highlight;
+mod instruction;
 mod llm;
 mod onboard;
 mod overlay;
@@ -19,6 +20,8 @@ mod types;
 mod viewport;
 
 use clap::Parser;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process;
 
 use cli::{Cli, Command};
@@ -60,10 +63,17 @@ async fn main() {
         Some(Command::Auth(args)) => auth_cmd::run(args).await,
         Some(Command::Config(args)) => config_cmd::run(args).await,
         None => {
+            let project = match prepare_project(cli.project.as_deref()) {
+                Ok(project) => project,
+                Err(e) => {
+                    eprintln!("[arcana] Error: {}", e);
+                    process::exit(1);
+                }
+            };
             if let Some(query) = cli.query {
-                app::single_shot(&query, &cli.model, &cli.provider).await
+                app::single_shot(&project, &query, &cli.model, &cli.provider).await
             } else {
-                app::interactive(cli.model, cli.provider).await
+                app::interactive(project, cli.model, cli.provider).await
             }
         }
     };
@@ -72,6 +82,38 @@ async fn main() {
         eprintln!("[arcana] Error: {}", e);
         process::exit(1);
     }
+}
+
+fn prepare_project(project: Option<&Path>) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let project = match project {
+        Some(path) => path.to_path_buf(),
+        None => {
+            let cwd = std::env::current_dir()?;
+            println!(
+                "Project path not specified, set to Arcana launch path `{}` by default.",
+                cwd.display()
+            );
+            print!("Continue [y/c] or Abort and Exit [n/a]: ");
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            match input.trim().to_ascii_lowercase().as_str() {
+                "y" | "c" | "yes" | "continue" => cwd,
+                "n" | "a" | "no" | "abort" | "" => return Err("project selection aborted".into()),
+                other => return Err(format!("unrecognized response `{}`", other).into()),
+            }
+        }
+    };
+
+    if !project.is_dir() {
+        return Err(format!("project path is not a directory: {}", project.display()).into());
+    }
+
+    let project = project.canonicalize()?;
+    std::fs::create_dir_all(project.join(".arcana"))?;
+    std::env::set_current_dir(&project)?;
+    Ok(project)
 }
 
 mod check {
@@ -291,6 +333,12 @@ mod auth_cmd {
                     println!("    ✗ {}", p);
                 }
                 println!();
+            }
+            Some(AuthAction::Instruction) => {
+                let content = crate::instruction::load_or_create()?;
+                let path = crate::instruction::path()?;
+                println!("  Authority instruction: {}\n", path.display());
+                print!("{}", content);
             }
             Some(AuthAction::Allow { pattern }) => {
                 let mut config = load()?;

@@ -4,6 +4,9 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "arcana", about = "Arcana Agent — Memory · Skills · Authority")]
 pub struct Cli {
+    /// Project path to open
+    pub project: Option<PathBuf>,
+
     /// Single-shot query (non-interactive)
     #[arg(short, long)]
     pub query: Option<String>,
@@ -105,6 +108,8 @@ pub struct AuthArgs {
 pub enum AuthAction {
     /// Show all authorized commands/network/fs rules
     Status,
+    /// Show ~/.arcana/INSTRUCTION.md
+    Instruction,
     /// Add a command to the allow list
     Allow {
         /// Command pattern to allow

@@ -1,7 +1,8 @@
 use ratatui::prelude::*;
 use ratatui::layout::{Constraint, Direction, Layout};
+use std::path::PathBuf;
+use std::time::Instant;
 
-use crate::banner;
 use crate::cli::ResumeArgs;
 use crate::composer::Composer;
 use crate::config::Config;
@@ -290,6 +291,7 @@ fn render_toasts(frame: &mut Frame, area: Rect, toasts: &[Toast]) {
 
 /// Run the interactive TUI session.
 pub async fn interactive(
+    _project: PathBuf,
     model: Option<String>,
     provider: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -327,7 +329,7 @@ pub async fn interactive(
                             // Check if this is an Enter that will send a message
                             if action == KeyAction::Enter && !app.composer.is_empty() {
                                 let input = app.composer.take_input();
-                                // Handle slash commands
+                                // Handle TUI commands
                                 let trimmed = input.trim();
                                 let is_command = trimmed.starts_with('\\');
                                 match trimmed {
@@ -345,6 +347,7 @@ pub async fn interactive(
   \\usage         Session token/cost stats\n\
   \\check         System health check\n\
   \\auth list     Show authorized commands\n\
+  \\auth instruction  Show authority instruction\n\
   \\auth add      Add command to allow list\n\
   \\auth remove   Remove from allow list\n\
   \\auth edit     Open authority.toml in $EDITOR\n\
@@ -392,6 +395,21 @@ Hotkeys:\n\
                                             app.viewport.add_error_message(
                                                 "No authority.toml found. Run: arcana onboard".into()
                                             );
+                                        }
+                                    }
+                                    "\\auth instruction" => {
+                                        match crate::instruction::load_or_create() {
+                                            Ok(content) => {
+                                                let path = crate::instruction::path()?;
+                                                app.viewport.add_error_message(format!(
+                                                    "Authority instruction: {}\n\n{}",
+                                                    path.display(),
+                                                    content
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                app.viewport.add_error_message(format!("Failed to load authority instruction: {}", e));
+                                            }
                                         }
                                     }
                                     cmd if cmd.starts_with("\\auth add ") => {
@@ -634,6 +652,7 @@ Hotkeys:\n\
 
 /// Run a single-shot query (non-interactive).
 pub async fn single_shot(
+    _project: &PathBuf,
     query: &str,
     model: &Option<String>,
     provider: &Option<String>,
@@ -683,6 +702,7 @@ pub async fn single_shot(
     }
 
     let client = reqwest::Client::new();
+    let started_at = Instant::now();
     let resp = client
         .post(format!("{}/chat/completions", base_url))
         .header("Content-Type", "application/json")
@@ -715,7 +735,14 @@ pub async fn single_shot(
     if let Some(usage) = data.get("usage") {
         let input = usage["prompt_tokens"].as_u64().unwrap_or(0);
         let output = usage["completion_tokens"].as_u64().unwrap_or(0);
-        println!("\n\x1b[2m[tokens: {} in / {} out]\x1b[0m", input, output);
+        let cost = crate::llm::estimate_cost(model_name, usage);
+        println!(
+            "\n\x1b[2m[tokens: {} in / {} out | cost: {:.4} | time: {:.1}s]\x1b[0m",
+            input,
+            output,
+            cost,
+            started_at.elapsed().as_secs_f64()
+        );
     }
 
     Ok(())

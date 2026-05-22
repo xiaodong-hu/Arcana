@@ -457,7 +457,7 @@ impl Composer {
             let hint_style = Style::default().fg(Color::Rgb(255, 165, 80));
             let commands = [
                 "\\quit", "\\help", "\\clear", "\\status",
-                "\\usage", "\\auth list", "\\auth add <cmd>",
+                "\\usage", "\\auth list", "\\auth instruction", "\\auth add <cmd>",
                 "\\auth remove <cmd>", "\\auth edit", "\\check", "\\mode",
             ];
             for cmd in commands {
@@ -508,8 +508,9 @@ fn slash_hint(input: &str) -> &'static str {
         "\\c" | "\\cl" | "\\cle" | "\\clea" | "\\clear" => " ← clear viewport",
         "\\s" | "\\st" | "\\sta" | "\\stat" | "\\statu" | "\\status" => " ← show status",
         "\\u" | "\\us" | "\\usa" | "\\usag" | "\\usage" => " ← session token/cost stats",
-        "\\au" | "\\aut" | "\\auth" => " list|add|remove|edit",
+        "\\au" | "\\aut" | "\\auth" => " list|instruction|add|remove|edit",
         "\\auth l" | "\\auth li" | "\\auth lis" | "\\auth list" => " ← show authorized commands",
+        "\\auth i" | "\\auth in" | "\\auth ins" | "\\auth inst" | "\\auth instr" | "\\auth instru" | "\\auth instruc" | "\\auth instruct" | "\\auth instructi" | "\\auth instructio" | "\\auth instruction" => " ← show authority instruction",
         "\\auth a" | "\\auth ad" | "\\auth add" => " <command> ← add to allow list",
         "\\auth r" | "\\auth re" | "\\auth rem" | "\\auth remo" | "\\auth remov" | "\\auth remove" => " <command> ← remove from allow list",
         "\\auth e" | "\\auth ed" | "\\auth edi" | "\\auth edit" => " ← open in $EDITOR",
@@ -523,7 +524,7 @@ fn autocomplete_slash(input: &str) -> Option<String> {
     const COMMANDS: &[&str] = &[
         "\\quit", "\\help", "\\mode", "\\model", "\\clear",
         "\\status", "\\usage", "\\auth", "\\check",
-        "\\auth list", "\\auth add", "\\auth remove", "\\auth edit",
+        "\\auth list", "\\auth instruction", "\\auth add", "\\auth remove", "\\auth edit",
     ];
     if input == "\\" || input == "\\auth " {
         return None; // too ambiguous

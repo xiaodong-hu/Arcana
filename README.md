@@ -124,7 +124,7 @@ readonly = ["/etc", "/usr"]
 deny = ["~/.ssh", "~/.gnupg", "~/.arcana/authority.toml"]
 ```
 
-Runtime management: `\auth list|add|remove|edit`
+Runtime management: `\auth list|instruction|add|remove|edit`
 
 ---
 
@@ -306,14 +306,15 @@ arcana onboard
 
 # Start working
 cd your-project
-arcana
+arcana .
 ```
 
 ### Key Commands
 
 ```bash
-arcana                          # Interactive session
-arcana -q "explain main.rs"    # Single-shot query
+arcana .                        # Interactive session for current project
+arcana . -q "explain main.rs"   # Single-shot query for current project
+arcana                          # Ask before using launch path as project
 arcana --model deepseek-v4-flash  # Override model
 arcana config show              # View configuration
 arcana config edit              # Edit config in $EDITOR
@@ -349,6 +350,7 @@ arcana resume --last            # Resume previous session
 | `\usage` | Session token/cost statistics |
 | `\check` | System health check |
 | `\auth list` | Show authorized commands |
+| `\auth instruction` | Show `~/.arcana/INSTRUCTION.md` |
 | `\auth add <cmd>` | Add to allow list |
 | `\auth remove <cmd>` | Remove from allow list |
 | `\auth edit` | Open authority.toml in `$EDITOR` |
