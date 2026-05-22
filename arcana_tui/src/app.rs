@@ -89,6 +89,7 @@ impl App {
                     self.mode = ViewMode::QueryOverlay;
                 }
             }
+            KeyAction::ToggleSelectionMode => {}
             KeyAction::Char('j') if self.composer.is_empty() => {
                 self.viewport.scroll_down(1);
             }
@@ -356,6 +357,7 @@ Hotkeys:\n\
   Ctrl+e         Open $EDITOR for prompt\n\
   Ctrl+/         Toggle query agent\n\
   Ctrl+o         Expand/collapse thinking chains\n\
+  Ctrl+y         Toggle terminal text selection mode\n\
   Ctrl+j/k       Scroll viewport down/up\n\
   Ctrl+h/l       Move cursor word left/right\n\
   Ctrl+w         Delete word left\n\
@@ -526,11 +528,45 @@ Hotkeys:\n\
                                     app.composer.history_index = None;
                                 }
                                 let _ = std::fs::remove_file(&tmp);
+                            } else if action == KeyAction::ToggleSelectionMode {
+                                let enabled = !tui.mouse_capture();
+                                tui.set_mouse_capture(enabled)?;
+                                app.toasts.push(Toast {
+                                    message: if enabled {
+                                        "Mouse scroll mode".into()
+                                    } else {
+                                        "Terminal selection mode".into()
+                                    },
+                                    detail: if enabled {
+                                        Some("Mouse wheel scrolls Arcana panes".into())
+                                    } else {
+                                        Some("Use terminal selection/copy; Ctrl+Y restores mouse scrolling".into())
+                                    },
+                                    created_at: chrono::Utc::now(),
+                                });
                             } else {
                                 app.handle_main_key(action);
                             }
                         }
                         ViewMode::QueryOverlay => {
+                            if action == KeyAction::ToggleSelectionMode {
+                                let enabled = !tui.mouse_capture();
+                                tui.set_mouse_capture(enabled)?;
+                                app.toasts.push(Toast {
+                                    message: if enabled {
+                                        "Mouse scroll mode".into()
+                                    } else {
+                                        "Terminal selection mode".into()
+                                    },
+                                    detail: if enabled {
+                                        Some("Mouse wheel scrolls Arcana panes".into())
+                                    } else {
+                                        Some("Use terminal selection/copy; Ctrl+Y restores mouse scrolling".into())
+                                    },
+                                    created_at: chrono::Utc::now(),
+                                });
+                                continue;
+                            }
                             // Handle Enter for overlay LLM dispatch
                             if action == KeyAction::Enter && !app.overlay.composer.is_empty() {
                                 let input = app.overlay.composer.take_input();

@@ -421,6 +421,7 @@ These are available inside the interactive TUI session (typed in the composer):
 | `Ctrl+Shift+P` | Freeze & backup all agents |
 | `Ctrl+Shift+M` | Modify last prompt |
 | `Ctrl+/` | Toggle query overlay |
+| `Ctrl+Y` | Toggle terminal text selection mode for native copy/select |
 
 ### 6.2 Composer
 
