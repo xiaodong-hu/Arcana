@@ -6,6 +6,7 @@ mod composer;
 mod config;
 mod diff_panel;
 mod event;
+mod highlight;
 mod llm;
 mod onboard;
 mod overlay;
