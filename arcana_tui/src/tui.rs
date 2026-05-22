@@ -1,6 +1,11 @@
 use crossterm::{
     execute,
-    event::{EnableBracketedPaste, DisableBracketedPaste, EnableMouseCapture, DisableMouseCapture},
+    event::{
+        EnableBracketedPaste, DisableBracketedPaste,
+        EnableMouseCapture, DisableMouseCapture,
+        PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        KeyboardEnhancementFlags,
+    },
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
@@ -15,8 +20,18 @@ impl Tui {
     /// Initialize the terminal (enter raw mode, alternate screen).
     pub fn new() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
-        let backend = CrosstermBackend::new(stdout());
+        let mut out = stdout();
+        execute!(out, EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
+        // Enable kitty keyboard protocol so Ctrl+/ is reported distinctly.
+        let _ = execute!(
+            out,
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+            )
+        );
+        let backend = CrosstermBackend::new(out);
         let terminal = Terminal::new(backend)?;
         Ok(Self { terminal })
     }
@@ -33,6 +48,7 @@ impl Tui {
     /// Suspend the TUI for running an external program (editor).
     /// Leaves alternate screen and disables raw mode so the program gets normal terminal.
     pub fn suspend(&mut self) -> io::Result<()> {
+        let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
         execute!(self.terminal.backend_mut(), DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen)?;
         terminal::disable_raw_mode()?;
         Ok(())
@@ -43,12 +59,21 @@ impl Tui {
     pub fn resume(&mut self) -> io::Result<()> {
         terminal::enable_raw_mode()?;
         execute!(self.terminal.backend_mut(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+            )
+        );
         self.terminal.clear()?;
         Ok(())
     }
 
     /// Restore the terminal to its original state (for exit).
     pub fn restore(&mut self) -> io::Result<()> {
+        let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
         terminal::disable_raw_mode()?;
         execute!(self.terminal.backend_mut(), DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen)?;
         Ok(())

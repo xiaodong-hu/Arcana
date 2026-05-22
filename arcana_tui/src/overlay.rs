@@ -1,5 +1,5 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::composer::Composer;
 use crate::theme::Theme;
@@ -19,6 +19,8 @@ pub struct QueryOverlay {
     pub composer: Composer,
     /// Scroll offset within the overlay
     pub scroll_offset: usize,
+    /// Whether auto-scroll is engaged
+    pub auto_scroll: bool,
     /// Whether currently streaming a response
     pub is_streaming: bool,
     /// Streaming text buffer
@@ -47,6 +49,7 @@ impl Default for QueryOverlay {
                 c
             },
             scroll_offset: 0,
+            auto_scroll: true,
             is_streaming: false,
             streaming_text: String::new(),
             streaming_think: None,
@@ -67,6 +70,18 @@ impl QueryOverlay {
     pub fn hide(&mut self) {
         self.visible = false;
         self.composer.clear();
+    }
+
+    pub fn scroll_up(&mut self, n: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_add(n);
+        self.auto_scroll = false;
+    }
+
+    pub fn scroll_down(&mut self, n: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(n);
+        if self.scroll_offset == 0 {
+            self.auto_scroll = true;
+        }
     }
 
     pub fn toggle_thinking(&mut self) {
@@ -146,7 +161,7 @@ impl QueryOverlay {
     }
 
     /// Render the overlay as a floating panel.
-    pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, theme: &Theme) {
         if !self.visible {
             return;
         }
@@ -180,11 +195,22 @@ impl QueryOverlay {
         for msg in &self.messages {
             match msg.role {
                 MessageRole::User => {
-                    lines.push(Line::from(vec![
-                        Span::styled("❯ ", theme.prompt_glyph),
-                        Span::styled(&msg.content, theme.user_message),
-                    ]));
-                    lines.push(Line::from(""));
+                    let content_lines: Vec<&str> = msg.content.split('\n').collect();
+                    for (i, line_text) in content_lines.iter().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(vec![
+                                Span::styled("❯ ", theme.prompt_glyph),
+                                Span::styled(line_text.to_string(), theme.user_message),
+                            ]));
+                        } else if line_text.is_empty() {
+                            lines.push(Line::from(""));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::raw("  "),
+                                Span::styled(line_text.to_string(), theme.user_message),
+                            ]));
+                        }
+                    }
                 }
                 MessageRole::Agent => {
                     // Thinking block
@@ -196,23 +222,26 @@ impl QueryOverlay {
                                         think.token_count, think.duration_ms as f64 / 1000.0),
                                     theme.thinking_block,
                                 ),
-                                Span::styled("ctrl+o", Style::default().fg(Color::Rgb(160, 160, 170))),
+                                Span::styled("ctrl+o to expand", Style::default().fg(Color::Rgb(160, 160, 170))),
                             ]));
                         } else {
-                            lines.push(Line::from(Span::styled(
-                                format!("▾ Thinking ({} tokens, {:.1}s)",
-                                    think.token_count, think.duration_ms as f64 / 1000.0),
-                                theme.thinking_block,
-                            )));
-                            for line in think.content.lines() {
-                                lines.push(styled_line_overlay(
-                                    &format!("  {}", line), theme.thinking_block,
-                                ));
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("▾ Thinking ({} tokens, {:.1}s) ",
+                                        think.token_count, think.duration_ms as f64 / 1000.0),
+                                    theme.thinking_block,
+                                ),
+                                Span::styled("ctrl+o to collapse", Style::default().fg(Color::Rgb(160, 160, 170))),
+                            ]));
+                            for md_line in crate::render_md::render_markdown(&think.content, theme.thinking_block) {
+                                let mut spans = vec![Span::raw("  ".to_string())];
+                                spans.extend(md_line.spans);
+                                lines.push(Line::from(spans));
                             }
                         }
                     }
-                    for line in msg.content.lines() {
-                        lines.push(styled_line_overlay(line, theme.agent_response));
+                    for md_line in crate::render_md::render_markdown(&msg.content, theme.agent_response) {
+                        lines.push(md_line);
                     }
                     lines.push(Line::from(""));
                 }
@@ -223,27 +252,99 @@ impl QueryOverlay {
         // Streaming content
         if self.is_streaming {
             if let Some(ref think) = self.streaming_think {
-                let header = format!("▾ Thinking ({}…)", think.token_count);
-                lines.push(Line::from(Span::styled(header, theme.thinking_block)));
-                let think_lines: Vec<&str> = think.content.lines().collect();
-                let show = think_lines.len().min(5);
-                for line in &think_lines[think_lines.len().saturating_sub(show)..] {
-                    lines.push(Line::from(Span::styled(
-                        format!("  {}", line), theme.thinking_block,
-                    )));
+                let elapsed = think.start_time.elapsed().as_secs_f64();
+                if !self.thinking_expanded {
+                    // Collapsed
+                    let header = format!("▸ Thinking ({} tokens, {:.1}s) ",
+                        think.token_count, elapsed);
+                    lines.push(Line::from(vec![
+                        Span::styled(header, theme.thinking_block),
+                        Span::styled("ctrl+o to expand", Style::default().fg(Color::Rgb(160, 160, 170))),
+                    ]));
+                } else {
+                    // Expanded
+                    let header = format!("▾ Thinking ({} tokens, {:.1}s) ",
+                        think.token_count, elapsed);
+                    lines.push(Line::from(vec![
+                        Span::styled(header, theme.thinking_block),
+                        Span::styled("ctrl+o to collapse", Style::default().fg(Color::Rgb(160, 160, 170))),
+                    ]));
+                    for md_line in crate::render_md::render_markdown(&think.content, theme.thinking_block) {
+                        let mut spans = vec![Span::raw("  ".to_string())];
+                        spans.extend(md_line.spans);
+                        lines.push(Line::from(spans));
+                    }
                 }
             }
             if !self.streaming_text.is_empty() {
-                for line in self.streaming_text.lines() {
-                    lines.push(styled_line_overlay(line, theme.agent_response));
+                for md_line in crate::render_md::render_markdown(&self.streaming_text, theme.agent_response) {
+                    lines.push(md_line);
                 }
             }
         }
 
+        // Wrap lines to panel width so scroll algorithm counts visual rows
+        let panel_width = conv_area.width as usize;
+        let mut wrapped_lines: Vec<Line> = Vec::new();
+        for line in lines {
+            let line_width: usize = line.spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum();
+            if line_width <= panel_width || panel_width == 0 {
+                wrapped_lines.push(line);
+            } else {
+                // Split into multiple visual lines
+                let full_text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+                let style = line.spans.first().map(|s| s.style).unwrap_or_default();
+                let mut remaining = full_text.as_str();
+                while !remaining.is_empty() {
+                    let mut byte_end = 0;
+                    let mut w = 0;
+                    for (i, ch) in remaining.char_indices() {
+                        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                        if w + cw > panel_width {
+                            break;
+                        }
+                        w += cw;
+                        byte_end = i + ch.len_utf8();
+                    }
+                    if byte_end == 0 && !remaining.is_empty() {
+                        // At least one char
+                        byte_end = remaining.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                    }
+                    wrapped_lines.push(Line::from(Span::styled(remaining[..byte_end].to_string(), style)));
+                    remaining = &remaining[byte_end..];
+                }
+            }
+        }
+        let lines = wrapped_lines;
+
+        // --- Auto-scroll algorithm (same as main viewport) ---
+        let cursor_line = if self.is_streaming {
+            lines.len().saturating_sub(1)
+        } else {
+            lines.len().saturating_sub(1)
+        };
+
         let visible_height = conv_area.height as usize;
-        let start = lines.len().saturating_sub(visible_height);
-        let visible_lines: Vec<Line> = lines.into_iter().skip(start).collect();
-        frame.render_widget(Paragraph::new(visible_lines).wrap(Wrap { trim: false }), conv_area);
+        let total = lines.len();
+        let threshold = (visible_height * 20 / 100).max(5);
+        let max_visible_cursor_pos = visible_height.saturating_sub(threshold);
+
+        let max_scroll = total.saturating_sub(visible_height);
+        if self.scroll_offset > max_scroll {
+            self.scroll_offset = max_scroll;
+        }
+
+        let start = if self.auto_scroll {
+            if cursor_line >= max_visible_cursor_pos {
+                cursor_line - max_visible_cursor_pos
+            } else {
+                0
+            }
+        } else {
+            max_scroll.saturating_sub(self.scroll_offset)
+        };
+        let visible_lines: Vec<Line> = lines.into_iter().skip(start).take(visible_height).collect();
+        frame.render_widget(Paragraph::new(visible_lines), conv_area);
 
         // Separator
         let hint = " Ctrl+/ or Esc to close │ ctrl+o thinking ";

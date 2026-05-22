@@ -11,39 +11,41 @@ The design borrows structural ideas from [Hermes Agent TUI](https://github.com/n
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        Terminal (alternate screen)                │
+│                        Kitty Keyboard Protocol enabled            │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────────┐  │
-│  │  Welcome Banner (ASCII art, one-time on session start)     │  │
+│  │  Status Bar (model, tokens, cost, tasks, sub-agents)       │  │
 │  ├────────────────────────────────────────────────────────────┤  │
-│  │  Status Bar (model, tokens, cost, skills, sub-agents)      │  │
-│  ├────────────────────────────────────────────────────────────┤  │
-│  │  Main Viewport                                             │  │
+│  │  Main Viewport (scrollable)                                │  │
 │  │  ┌──────────────────────────────────────────────────────┐  │  │
-│  │  │  Conversation Stream (scrollable)                    │  │  │
-│  │  │  - User messages                                     │  │  │
-│  │  │  - Agent responses (streamed token-by-token)         │  │  │
-│  │  │  - Thinking blocks (collapsible, dimmed)             │  │  │
-│  │  │  - Tool calls & results                              │  │  │
-│  │  │  - Diff review panels                                │  │  │
+│  │  │  Welcome Banner (gradient ASCII art, scrollable)     │  │  │
+│  │  │  Conversation Stream                                 │  │  │
+│  │  │  - User messages (multiline, faithful formatting)    │  │  │
+│  │  │  - Thinking blocks (collapsible, compact newlines)   │  │  │
+│  │  │  - Agent responses (markdown rendered, streamed)     │  │  │
+│  │  │  - Cost/Time statistics                              │  │  │
+│  │  │  - Full-width separators between dialogues           │  │  │
 │  │  └──────────────────────────────────────────────────────┘  │  │
 │  ├────────────────────────────────────────────────────────────┤  │
-│  │  Input Composer (multi-line, with prompt glyph)            │  │
+│  │  Task Panel (collapsible, Ctrl+T)                          │  │
+│  ├────────────────────────────────────────────────────────────┤  │
+│  │  Input Composer (multi-line, Ctrl+Enter for newline)       │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────────┐  │
-│  │  [OVERLAY] Query Sub-Agent (toggled with `?`)              │  │
-│  │  - Shares main agent context (zero extra tokens)           │  │
-│  │  - Dismissed with `q` (agent stays alive)                  │  │
+│  │  [OVERLAY] Query Sub-Agent (Ctrl+/ to toggle)              │  │
+│  │  - Same streaming/scrolling/thinking logic as main         │  │
+│  │  - Independent conversation, own composer                  │  │
+│  │  - Scales with physical window resize                      │  │
 │  └────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Rendering engine**: ratatui with crossterm backend. Differential rendering (only repaint changed cells) to avoid flicker during streaming.
+**Rendering engine**: ratatui 0.29 with crossterm 0.28 backend. Kitty keyboard enhancement protocol enabled (`DISAMBIGUATE_ESCAPE_CODES | REPORT_ALL_KEYS_AS_ESCAPE_CODES | REPORT_ALTERNATE_KEYS`) for reliable modifier key detection.
 
-**Event loop**: Tokio async runtime. Three concurrent tasks:
-1. **Input handler** — reads terminal events (keys, mouse, resize).
-2. **LLM stream consumer** — receives tokens from the async streaming client, appends to viewport.
-3. **Daemon listener** — receives events from authority/skill/sub-agent daemons via unix sockets.
+**Event loop**: Tokio async runtime. Key events filtered to `Press`/`Repeat` only (Release events discarded to prevent double-firing with kitty protocol).
+
+**Layout**: Vertical split — Status Bar (fixed) → Viewport (flexible `Min(5)`) → Task Panel (collapsible) → Composer (dynamic height, max 50% of window).
 
 ---
 
@@ -213,14 +215,24 @@ A multi-line text input area at the bottom of the screen.
 | Key | Action |
 |-----|--------|
 | `Enter` | Send message (if non-empty) |
-| `Alt+Enter` / `Ctrl+J` | Insert newline |
-| `Ctrl+C` | Interrupt agent (if running) / clear input (if idle) |
-| `Ctrl+D` | End session (graceful) |
-| `Ctrl+Shift+P` | Freeze & backup (all agents) |
-| `Ctrl+Shift+M` | Modify last prompt (re-edit) |
-| `?` | Open query sub-agent overlay (when not in text input mode) |
-| `Tab` | Autocomplete `/` commands |
-| `↑` (at empty input) | Recall previous user message |
+| `Ctrl+Enter` / `Shift+Enter` / `Alt+Enter` | Insert newline |
+| `Ctrl+C` | Clear input |
+| `Ctrl+B` | Stop LLM generation |
+| `Ctrl+O` | Toggle thinking chain expand/collapse (works during streaming) |
+| `Ctrl+/` | Toggle query sub-agent overlay |
+| `Ctrl+E` / `Ctrl+G` | Open `$EDITOR` for prompt editing |
+| `Ctrl+J` / `Ctrl+K` | Scroll viewport down/up (3 lines) |
+| `Ctrl+H` / `Ctrl+L` | Move cursor word left/right |
+| `Ctrl+W` | Delete word left |
+| `Ctrl+Up` / `Ctrl+Down` | Jump to start/end of input |
+| `Ctrl+Left` / `Ctrl+Right` | Move cursor by word |
+| `Home` / `End` | Start/end of current line |
+| `Tab` | Autocomplete `\` commands / insert tab |
+| `Up` (empty input only) | Recall previous message from history |
+| `Down` (in history mode) | Recall next message / restore original |
+| `Esc` | Dismiss query overlay (when in overlay) |
+
+**History behavior**: `Up` only enters history mode from an empty prompt. Any edit action (typing, backspace, cursor movement) immediately exits history mode.
 
 ### 5.3 Slash Commands
 
@@ -253,17 +265,26 @@ Users often need to ask quick questions mid-task ("what's the signature of X?", 
 - **Shares context**: Reads the same conversation history and memory as the main agent. No context duplication.
 - **Non-destructive**: Its responses do NOT append to the main agent's conversation history. The main agent never sees the query exchange.
 - **Always alive**: Spawned at session start, never killed (only hidden/shown).
-- **Single layer**: Cannot be nested. Pressing `?` while the overlay is open does nothing.
+- **Single layer**: Cannot be nested. Pressing `Ctrl+/` while the overlay is open dismisses it.
 
 ### 6.2 Activation & Dismissal
 
 | Key | State | Action |
 |-----|-------|--------|
-| `?` | Main viewport active, composer empty | Open query overlay |
-| `?` | Main viewport active, composer has text | Insert literal `?` character |
-| `q` | Query overlay active, composer empty | Dismiss overlay, return to main |
-| `q` | Query overlay active, composer has text | Insert literal `q` character |
-| `Esc` | Query overlay active | Dismiss overlay (always, regardless of composer state) |
+| `Ctrl+/` | Main viewport active | Open query overlay |
+| `Ctrl+/` | Query overlay active | Dismiss overlay, return to main |
+| `Esc` | Query overlay active | Dismiss overlay, return to main |
+
+### 6.3 Overlay Features
+
+The query overlay supports the **exact same** functionality as the main viewport:
+- Thinking chain streaming with collapse/expand (`Ctrl+O`)
+- Auto-scroll with cursor-tracking threshold algorithm (relative to overlay panel height)
+- Manual scroll with `Ctrl+J`/`Ctrl+K`
+- Markdown rendering with syntax highlighting and compact newlines
+- Multiline input with `Ctrl+Enter`, word movement with `Ctrl+H`/`Ctrl+L`
+- History recall with `Up`/`Down` from empty prompt
+- Editor integration with `Ctrl+E`
 
 ### 6.3 Overlay Layout
 
@@ -428,20 +449,82 @@ DeepSeek V4 can deliver 100+ tokens/second. The TUI must not drop frames:
 
 ## 12. Crate Dependencies
 
-| Crate | Purpose |
-|-------|---------|
-| `ratatui` | TUI framework (widgets, layout, rendering) |
-| `crossterm` | Terminal backend (events, raw mode, alternate screen) |
-| `tokio` | Async runtime (event loop, socket listeners, LLM streaming) |
-| `syntect` | Syntax highlighting for code blocks in responses |
-| `unicode-width` | Correct CJK/emoji width calculation |
-| `textwrap` | Word-wrapping for long lines |
-| `similar` | Diff computation for file review panels |
-| `zstd` | Compression for collapsed thinking blocks |
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| `ratatui` | 0.29 | TUI framework (widgets, layout, rendering) |
+| `crossterm` | 0.28 | Terminal backend (events, raw mode, kitty keyboard protocol) |
+| `tokio` | 1.x | Async runtime (event loop, streaming, timers) |
+| `tokio-stream` | 0.1 | Async stream utilities for SSE token streaming |
+| `reqwest` | 0.12 | HTTP client for LLM API calls |
+| `serde` / `serde_json` | 1.x | JSON serialization for API messages |
+| `syntect` | 5.x | Syntax highlighting for code blocks in responses |
+| `unicode-width` | 0.2 | Correct CJK/emoji width calculation for wrapping |
+| `chrono` | 0.4 | Timestamps for messages |
+| `dirs` | 5.x | Home directory resolution for config paths |
+| `clap` | 4.x | CLI argument parsing |
+| `toml` | 0.8 | Configuration file parsing |
+| `futures` | 0.3 | Async stream combinators for event reader |
+
+### 12.1 Kitty Keyboard Protocol
+
+The TUI enables the kitty keyboard enhancement protocol on startup with flags:
+- `DISAMBIGUATE_ESCAPE_CODES` — distinguishes Esc from Alt+key
+- `REPORT_ALL_KEYS_AS_ESCAPE_CODES` — ensures Ctrl+/ and other combos are reported as CSI u sequences
+- `REPORT_ALTERNATE_KEYS` — sends shifted characters (e.g., `?` for Shift+/) as alternate codepoints
+
+This is pushed on init/resume and popped on suspend/restore. Key events are filtered to `Press`/`Repeat` only (Release events discarded).
 
 ---
 
-## 13. Open Questions
+## 14. Auto-Scroll Algorithm
+
+The viewport uses a cursor-tracking auto-scroll algorithm that adapts dynamically to window resize.
+
+### 14.1 Cursor Position Definition
+
+The "cursor" is the logical line that should remain visible during streaming:
+
+| State | Thinking Collapsed | Thinking Expanded |
+|-------|-------------------|-------------------|
+| LLM thinking (no output yet) | Last line (collapsed header) | Last line of streaming thinking content |
+| LLM outputting | Last line of streaming response | Last line of thinking panel (thinking finished) |
+| LLM finished | Very last line (Cost/Time/separator) | Very last line (Cost/Time/separator) |
+
+### 14.2 Threshold & Scroll Logic
+
+```
+visible_height = panel height in lines (measured each frame, adapts to resize)
+threshold = max(visible_height * 20 / 100, 5)  // lines reserved from bottom
+max_cursor_row = visible_height - threshold     // highest row cursor can occupy
+
+if auto_scroll:
+    cursor_row_in_window = cursor_line - start_line
+    if cursor_line > max_cursor_row:
+        start_line = cursor_line - max_cursor_row
+    else:
+        start_line = 0
+else:
+    // Manual scroll mode (user scrolled with Ctrl+j/k)
+    start_line = max_scroll - scroll_offset
+```
+
+### 14.3 Behavior
+
+- **During streaming**: The cursor advances non-linearly (LLM token generation is bursty). Each frame, the algorithm scrolls up as many lines as needed to keep the cursor within the threshold zone.
+- **On window resize**: `visible_height` is re-measured from the actual terminal/panel dimensions. The threshold recalculates automatically. No special resize handler needed.
+- **Manual scroll**: `Ctrl+K` scrolls up (disengages auto-scroll), `Ctrl+J` scrolls down (re-engages auto-scroll when offset reaches 0).
+- **Query panel**: Same algorithm, but `visible_height` = query panel's conversation area height (which scales proportionally with the physical window).
+
+### 14.4 Compact Display
+
+Thinking chain content and LLM responses are rendered through `render_markdown()` which applies `compact_newlines()`:
+- Multiple consecutive empty lines are collapsed to zero
+- A single blank line is preserved only before `#` headers or `---` horizontal rules
+- This ensures dense, readable output without wasted vertical space
+
+---
+
+## 15. Open Questions
 
 - [ ] Should the query sub-agent overlay support syntax-highlighted code responses? (adds complexity to the overlay renderer) --- Yes I would.
 - [ ] Mouse support: drag-to-select for copy? Or rely on terminal's native selection? --- Yes I would like to add copy paste support and mouse support

@@ -1,4 +1,4 @@
-use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -56,6 +56,11 @@ pub fn spawn_event_reader() -> (mpsc::UnboundedSender<AppEvent>, mpsc::Unbounded
                 event = reader.next() => {
                     match event {
                         Some(Ok(CrosstermEvent::Key(key))) => {
+                            // With kitty keyboard protocol, we get Press+Release events.
+                            // Only process Press (and Repeat) to avoid double-firing.
+                            if key.kind == KeyEventKind::Release {
+                                continue;
+                            }
                             if tx2.send(AppEvent::Key(key)).is_err() { break; }
                         }
                         Some(Ok(CrosstermEvent::Paste(text))) => {
@@ -155,56 +160,58 @@ pub enum KeyAction {
 
 /// Map a crossterm KeyEvent to our KeyAction.
 pub fn classify_key(key: &KeyEvent) -> KeyAction {
-    match (key.modifiers, key.code) {
-        // Ctrl combinations
-        (m, KeyCode::Char('c')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Interrupt,
-        (m, KeyCode::Char('b')) if m.contains(KeyModifiers::CONTROL) => KeyAction::BreakGeneration,
-        (m, KeyCode::Char('u')) if m.contains(KeyModifiers::CONTROL) => KeyAction::HalfPageUp,
-        (m, KeyCode::Char('j')) if m.contains(KeyModifiers::CONTROL) => KeyAction::FocusDown,
-        (m, KeyCode::Char('k')) if m.contains(KeyModifiers::CONTROL) => KeyAction::FocusUp,
-        (m, KeyCode::Char('\n')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
-        (m, KeyCode::Char('\r')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
-        (m, KeyCode::Char('o')) if m.contains(KeyModifiers::CONTROL) => KeyAction::Expand,
-        (m, KeyCode::Char('w')) if m.contains(KeyModifiers::CONTROL) => KeyAction::DeleteWordLeft,
-        (m, KeyCode::Char('h')) if m.contains(KeyModifiers::CONTROL) => KeyAction::WordLeft,
-        (m, KeyCode::Char('l')) if m.contains(KeyModifiers::CONTROL) => KeyAction::WordRight,
-        (m, KeyCode::Char('g')) if m.contains(KeyModifiers::CONTROL) => KeyAction::OpenEditor,
-        (m, KeyCode::Char('e')) if m.contains(KeyModifiers::CONTROL) => KeyAction::OpenEditor,
-        (m, KeyCode::Char('t')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleTasks,
-        (m, KeyCode::Char('s')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleSkills,
-        (m, KeyCode::Char('a')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleAgents,
-        (m, KeyCode::Char('/')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleQuery,
-        (m, KeyCode::Char('_')) if m.contains(KeyModifiers::CONTROL) => KeyAction::ToggleQuery,
-        (m, KeyCode::Char('p')) if m.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) => {
-            KeyAction::Freeze
-        }
+    let mods = key.modifiers;
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    let shift = mods.contains(KeyModifiers::SHIFT);
+    let alt = mods.contains(KeyModifiers::ALT);
 
-        // Alt+Enter, Ctrl+Enter, or Shift+Enter for newline
-        (m, KeyCode::Enter) if m.contains(KeyModifiers::ALT) => KeyAction::Newline,
-        (m, KeyCode::Enter) if m.contains(KeyModifiers::CONTROL) => KeyAction::Newline,
-        (m, KeyCode::Enter) if m.contains(KeyModifiers::SHIFT) => KeyAction::Newline,
+    match key.code {
+        // --- Enter variants ---
+        KeyCode::Enter if ctrl || shift || alt => KeyAction::Newline,
+        KeyCode::Enter => KeyAction::Enter,
 
-        // Basic keys
-        (_, KeyCode::Enter) => KeyAction::Enter,
-        (_, KeyCode::Backspace) => KeyAction::Backspace,
-        (_, KeyCode::Delete) => KeyAction::Delete,
-        (_, KeyCode::Esc) => KeyAction::Escape,
-        (_, KeyCode::Tab) => KeyAction::Tab,
-        (m, KeyCode::Up) if m.contains(KeyModifiers::CONTROL) => KeyAction::JumpTop,
-        (m, KeyCode::Down) if m.contains(KeyModifiers::CONTROL) => KeyAction::JumpBottom,
-        (_, KeyCode::Up) => KeyAction::Up,
-        (_, KeyCode::Down) => KeyAction::Down,
-        (m, KeyCode::Left) if m.contains(KeyModifiers::CONTROL) => KeyAction::WordLeft,
-        (m, KeyCode::Right) if m.contains(KeyModifiers::CONTROL) => KeyAction::WordRight,
-        (_, KeyCode::Left) => KeyAction::Left,
-        (_, KeyCode::Right) => KeyAction::Right,
-        (_, KeyCode::PageUp) => KeyAction::PageUp,
-        (_, KeyCode::PageDown) => KeyAction::PageDown,
-        (_, KeyCode::Home) => KeyAction::Home,
-        (_, KeyCode::End) => KeyAction::End,
+        // --- Ctrl+char combinations ---
+        KeyCode::Char('c') if ctrl => KeyAction::Interrupt,
+        KeyCode::Char('b') if ctrl => KeyAction::BreakGeneration,
+        KeyCode::Char('u') if ctrl => KeyAction::HalfPageUp,
+        KeyCode::Char('j') if ctrl => KeyAction::FocusDown,
+        KeyCode::Char('k') if ctrl => KeyAction::FocusUp,
+        KeyCode::Char('o') if ctrl => KeyAction::Expand,
+        KeyCode::Char('w') if ctrl => KeyAction::DeleteWordLeft,
+        KeyCode::Char('h') if ctrl => KeyAction::WordLeft,
+        KeyCode::Char('l') if ctrl => KeyAction::WordRight,
+        KeyCode::Char('g') | KeyCode::Char('e') if ctrl => KeyAction::OpenEditor,
+        KeyCode::Char('t') if ctrl => KeyAction::ToggleTasks,
+        KeyCode::Char('s') if ctrl => KeyAction::ToggleSkills,
+        KeyCode::Char('a') if ctrl => KeyAction::ToggleAgents,
+        // Ctrl+/ — kitty protocol sends Char('/'), legacy sends Char('7') for 0x1F
+        KeyCode::Char('/') if ctrl => KeyAction::ToggleQuery,
+        KeyCode::Char('_') if ctrl => KeyAction::ToggleQuery,
+        KeyCode::Char('7') if ctrl => KeyAction::ToggleQuery,
+        KeyCode::Char('p') if ctrl && shift => KeyAction::Freeze,
+        // Ctrl+Enter as Char('\r') or Char('\n')
+        KeyCode::Char('\r') | KeyCode::Char('\n') if ctrl => KeyAction::Newline,
 
-        // Character input
-        (m, KeyCode::Char(c)) if !m.contains(KeyModifiers::CONTROL) => KeyAction::Char(c),
+        // --- Basic keys ---
+        KeyCode::Backspace => KeyAction::Backspace,
+        KeyCode::Delete => KeyAction::Delete,
+        KeyCode::Esc => KeyAction::Escape,
+        KeyCode::Tab => KeyAction::Tab,
+        KeyCode::Up if ctrl => KeyAction::JumpTop,
+        KeyCode::Down if ctrl => KeyAction::JumpBottom,
+        KeyCode::Up => KeyAction::Up,
+        KeyCode::Down => KeyAction::Down,
+        KeyCode::Left if ctrl => KeyAction::WordLeft,
+        KeyCode::Right if ctrl => KeyAction::WordRight,
+        KeyCode::Left => KeyAction::Left,
+        KeyCode::Right => KeyAction::Right,
+        KeyCode::PageUp => KeyAction::PageUp,
+        KeyCode::PageDown => KeyAction::PageDown,
+        KeyCode::Home => KeyAction::Home,
+        KeyCode::End => KeyAction::End,
+
+        // --- Character input (no Ctrl) ---
+        KeyCode::Char(c) if !ctrl => KeyAction::Char(c),
 
         _ => KeyAction::None,
     }

@@ -124,17 +124,11 @@ impl App {
             KeyAction::Up => {
                 if self.composer.is_empty() {
                     self.composer.recall_previous();
-                } else if self.composer.history_index.is_some() {
-                    self.composer.recall_previous();
-                } else if !self.composer.move_up() {
-                    // Already on first line, do nothing
                 }
             }
             KeyAction::Down => {
                 if self.composer.history_index.is_some() {
                     self.composer.recall_next();
-                } else if !self.composer.is_empty() {
-                    self.composer.move_down();
                 }
             }
             KeyAction::PageUp => { self.viewport.scroll_up(20); }
@@ -171,22 +165,36 @@ impl App {
                 self.mode = ViewMode::Main;
             }
             KeyAction::Expand => {
-                // Ctrl+O: toggle thinking in overlay
                 self.overlay.toggle_thinking();
             }
             KeyAction::Char(c) => { self.overlay.composer.insert_char(c); }
-            KeyAction::Tab => { self.overlay.composer.insert_tab(); }
-            KeyAction::Enter => {
-                // Enter sends the query — handled in event loop
-            }
+            KeyAction::Tab => { self.overlay.composer.autocomplete_or_tab(); }
             KeyAction::Newline => { self.overlay.composer.insert_newline(); }
             KeyAction::Backspace => { self.overlay.composer.backspace(); }
             KeyAction::Delete => { self.overlay.composer.delete(); }
             KeyAction::Left => { self.overlay.composer.move_left(); }
             KeyAction::Right => { self.overlay.composer.move_right(); }
+            KeyAction::WordLeft => { self.overlay.composer.move_word_left(); }
+            KeyAction::WordRight => { self.overlay.composer.move_word_right(); }
+            KeyAction::DeleteWordLeft => { self.overlay.composer.delete_word_left(); }
             KeyAction::Home => { self.overlay.composer.move_home(); }
             KeyAction::End => { self.overlay.composer.move_end(); }
+            KeyAction::JumpTop => { self.overlay.composer.jump_top(); }
+            KeyAction::JumpBottom => { self.overlay.composer.jump_bottom(); }
+            KeyAction::Up => {
+                if self.overlay.composer.is_empty() {
+                    self.overlay.composer.recall_previous();
+                }
+            }
+            KeyAction::Down => {
+                if self.overlay.composer.history_index.is_some() {
+                    self.overlay.composer.recall_next();
+                }
+            }
             KeyAction::Interrupt => { self.overlay.composer.clear(); }
+            KeyAction::FocusDown => { self.overlay.scroll_down(3); }
+            KeyAction::FocusUp => { self.overlay.scroll_up(3); }
+            KeyAction::Enter => {} // handled in event loop
             _ => {}
         }
     }
@@ -211,7 +219,6 @@ impl App {
     fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
-        let banner_h = if self.show_banner { banner::banner_height(area.width) } else { 0 };
         let status_h = status_bar::status_bar_height(
             &self.panel_state, &self.skills, &self.agents, &self.tasks,
         );
@@ -221,7 +228,6 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![
-                Constraint::Length(banner_h),
                 Constraint::Length(status_h),
                 Constraint::Min(5),
                 Constraint::Length(task_panel_h),
@@ -229,20 +235,16 @@ impl App {
             ])
             .split(area);
 
-        if self.show_banner && banner_h > 0 {
-            banner::render_banner(frame, chunks[0], &self.theme, &self.status);
-        }
-
         status_bar::render_status_bar(
-            frame, chunks[1], &self.theme, &self.status,
+            frame, chunks[0], &self.theme, &self.status,
             &self.panel_state, &self.skills, &self.agents, &self.tasks,
         );
 
-        self.viewport.render(frame, chunks[2], &self.theme);
+        self.viewport.render(frame, chunks[1], &self.theme);
 
-        panels::render_task_panel(frame, chunks[3], &self.panel_state, &self.tasks);
+        panels::render_task_panel(frame, chunks[2], &self.panel_state, &self.tasks);
 
-        self.composer.render(frame, chunks[4], &self.theme);
+        self.composer.render(frame, chunks[3], &self.theme);
 
         if self.mode == ViewMode::QueryOverlay {
             self.overlay.render(frame, area, &self.theme);
@@ -302,6 +304,10 @@ pub async fn interactive(
 
     let mut tui = Tui::new()?;
     let mut app = App::new(&config);
+
+    // Inject banner into viewport as scrollable content
+    app.viewport.add_banner(&config.agents.main.model);
+
     let (mut event_tx, mut events, mut event_handle) = event::spawn_event_reader();
 
     // Conversation history for LLM context
@@ -322,8 +328,9 @@ pub async fn interactive(
                             if action == KeyAction::Enter && !app.composer.is_empty() {
                                 let input = app.composer.take_input();
                                 // Handle slash commands
-                                let is_command = input.starts_with('\\');
-                                match input.trim() {
+                                let trimmed = input.trim();
+                                let is_command = trimmed.starts_with('\\');
+                                match trimmed {
                                     "\\quit" | "\\q" => { app.should_quit = true; }
                                     "\\clear" => {
                                         app.viewport.messages.clear();
@@ -446,9 +453,9 @@ Hotkeys:\n\
                                             format!("Health Check:\n  {}", lines.join("\n  "))
                                         );
                                     }
-                                    _ if input.starts_with('\\') => {
+                                    _ if is_command => {
                                         app.viewport.add_error_message(
-                                            format!("Unknown command: {}", input.trim())
+                                            format!("Unknown command: {}", trimmed)
                                         );
                                     }
                                     _ => {
@@ -467,7 +474,7 @@ Hotkeys:\n\
                                     }
                                 }
                                 // Add separator after command output
-                                if is_command && input.trim() != "\\quit" && input.trim() != "\\q" && input.trim() != "\\clear" {
+                                if is_command && trimmed != "\\quit" && trimmed != "\\q" && trimmed != "\\clear" {
                                     app.viewport.add_separator();
                                 }
                                 app.show_banner = false;

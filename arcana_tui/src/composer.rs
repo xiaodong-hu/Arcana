@@ -44,6 +44,7 @@ impl Composer {
 
     /// Insert a character at the cursor position.
     pub fn insert_char(&mut self, c: char) {
+        self.history_index = None;
         self.input.insert(self.cursor_pos, c);
         self.cursor_pos += c.len_utf8();
         self.show_hint = false;
@@ -70,6 +71,7 @@ impl Composer {
 
     /// Insert a newline at the cursor position (Ctrl+Enter).
     pub fn insert_newline(&mut self) {
+        self.history_index = None;
         self.input.insert(self.cursor_pos, '\n');
         self.cursor_pos += 1;
         self.show_hint = false;
@@ -77,6 +79,7 @@ impl Composer {
 
     /// Delete the character before the cursor.
     pub fn backspace(&mut self) {
+        self.history_index = None;
         if self.cursor_pos > 0 {
             let prev = self.input[..self.cursor_pos]
                 .char_indices()
@@ -90,6 +93,7 @@ impl Composer {
 
     /// Delete the character at the cursor.
     pub fn delete(&mut self) {
+        self.history_index = None;
         if self.cursor_pos < self.input.len() {
             let next = self.input[self.cursor_pos..]
                 .char_indices()
@@ -102,6 +106,7 @@ impl Composer {
 
     /// Move cursor left by one character.
     pub fn move_left(&mut self) {
+        self.history_index = None;
         if self.cursor_pos > 0 {
             self.cursor_pos = self.input[..self.cursor_pos]
                 .char_indices()
@@ -113,6 +118,7 @@ impl Composer {
 
     /// Move cursor right by one character.
     pub fn move_right(&mut self) {
+        self.history_index = None;
         if self.cursor_pos < self.input.len() {
             self.cursor_pos = self.input[self.cursor_pos..]
                 .char_indices()
@@ -124,12 +130,14 @@ impl Composer {
 
     /// Move cursor to start of current line (Home).
     pub fn move_home(&mut self) {
+        self.history_index = None;
         let before = &self.input[..self.cursor_pos];
         self.cursor_pos = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
     }
 
     /// Move cursor to end of current line (End).
     pub fn move_end(&mut self) {
+        self.history_index = None;
         let after = &self.input[self.cursor_pos..];
         if let Some(nl) = after.find('\n') {
             self.cursor_pos += nl;
@@ -150,6 +158,7 @@ impl Composer {
 
     /// Delete word to the left of cursor (Ctrl+w).
     pub fn delete_word_left(&mut self) {
+        self.history_index = None;
         if self.cursor_pos == 0 { return; }
         let bytes = self.input.as_bytes();
         let mut pos = self.cursor_pos;
@@ -163,6 +172,7 @@ impl Composer {
 
     /// Move cursor left by one word.
     pub fn move_word_left(&mut self) {
+        self.history_index = None;
         if self.cursor_pos == 0 { return; }
         // Skip whitespace backwards
         let bytes = self.input.as_bytes();
@@ -175,6 +185,7 @@ impl Composer {
 
     /// Move cursor right by one word.
     pub fn move_word_right(&mut self) {
+        self.history_index = None;
         let len = self.input.len();
         if self.cursor_pos >= len { return; }
         let bytes = self.input.as_bytes();

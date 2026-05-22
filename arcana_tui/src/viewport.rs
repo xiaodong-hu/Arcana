@@ -1,5 +1,5 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::theme::Theme;
 use crate::types::{Message, MessageRole, ThinkingBlock};
@@ -19,6 +19,8 @@ pub struct Viewport {
     pub streaming_text: String,
     /// Whether we're currently receiving a response
     pub is_streaming: bool,
+    /// Whether thinking panels (including streaming) are collapsed
+    pub think_collapsed: bool,
 }
 
 #[derive(Debug)]
@@ -37,6 +39,7 @@ impl Default for Viewport {
             streaming_think: None,
             streaming_text: String::new(),
             is_streaming: false,
+            think_collapsed: true,
         }
     }
 }
@@ -52,6 +55,38 @@ impl Viewport {
         if self.auto_scroll {
             self.scroll_offset = 0;
         }
+    }
+
+    /// Add the welcome banner as scrollable content.
+    pub fn add_banner(&mut self, model_name: &str) {
+        let art = [
+            "                                                     ",
+            "    ░█████╗░██████╗░░█████╗░░█████╗░███╗░░██╗░█████╗░",
+            "    ██╔══██╗██╔══██╗██╔══██╗██╔══██╗████╗░██║██╔══██╗",
+            "    ███████║██████╔╝██║░░╚═╝███████║██╔██╗██║███████║",
+            "    ██╔══██║██╔══██╗██║░░██╗██╔══██║██║╚████║██╔══██║",
+            "    ██║░░██║██║░░██║╚█████╔╝██║░░██║██║░╚███║██║░░██║",
+            "    ╚═╝░░╚═╝╚═╝░░╚═╝░╚════╝░╚═╝░░╚═╝╚═╝░░╚══╝╚═╝░░╚═╝",
+        ];
+        let mut banner = String::new();
+        for line in &art {
+            banner.push_str(line);
+            banner.push('\n');
+        }
+        banner.push('\n');
+        banner.push_str("    The Arcane Agent — Memory · Skills · Authority\n");
+        banner.push('\n');
+        banner.push_str(&format!("    Model:      {:<20} Session:    new\n", model_name));
+        banner.push_str(&format!("    Provider:   {:<20} Sub-agents: query + spawn\n", "deepseek"));
+        banner.push_str(&format!("                                                     "));
+        banner.push_str(&format!("                                                     "));
+        self.messages.push(Message {
+            role: MessageRole::System,
+            content: banner,
+            timestamp: chrono::Utc::now(),
+            thinking: None,
+            tool_calls: Vec::new(),
+        });
     }
 
     /// Start a thinking block.
@@ -118,15 +153,12 @@ impl Viewport {
 
     /// Toggle all thinking blocks expand/collapse (Ctrl+O).
     pub fn toggle_thinking(&mut self) {
-        let any_expanded = self.messages.iter().any(|m| {
-            m.thinking.as_ref().is_some_and(|t| !t.collapsed)
-        });
+        self.think_collapsed = !self.think_collapsed;
         for msg in &mut self.messages {
             if let Some(ref mut t) = msg.thinking {
-                t.collapsed = any_expanded;
+                t.collapsed = self.think_collapsed;
             }
         }
-        // Reset scroll since content size changed dramatically
         self.scroll_offset = 0;
     }
 
@@ -231,12 +263,22 @@ impl Viewport {
 
             match msg.role {
                 MessageRole::User => {
-                    let spans = vec![
-                        Span::styled("❯ ", theme.prompt_glyph),
-                        Span::styled(&msg.content, theme.user_message),
-                    ];
-                    lines.push((msg_idx, Line::from(spans)));
-                    lines.push((msg_idx, Line::from("")));
+                    let content_lines: Vec<&str> = msg.content.split('\n').collect();
+                    for (i, line_text) in content_lines.iter().enumerate() {
+                        if i == 0 {
+                            lines.push((msg_idx, Line::from(vec![
+                                Span::styled("❯ ", theme.prompt_glyph),
+                                Span::styled(line_text.to_string(), theme.user_message),
+                            ])));
+                        } else if line_text.is_empty() {
+                            lines.push((msg_idx, Line::from("")));
+                        } else {
+                            lines.push((msg_idx, Line::from(vec![
+                                Span::raw("  "),
+                                Span::styled(line_text.to_string(), theme.user_message),
+                            ])));
+                        }
+                    }
                 }
                 MessageRole::Agent => {
                     // Render thinking blocks (collapsed by default, Ctrl+O to expand)
@@ -284,19 +326,49 @@ impl Viewport {
                     lines.push((msg_idx, Line::from("")));
                 }
                 MessageRole::System => {
-                    let style = if msg.content.starts_with("Cost:") || msg.content.starts_with('─') {
-                        theme.thinking_block
+                    let is_cost = msg.content.starts_with("Cost:");
+                    let is_sep = msg.content.starts_with('─');
+                    let is_banner = msg.content.contains("█████") || msg.content.contains("╔══");
+                    if is_cost {
+                        lines.push((msg_idx, Line::from("")));
+                    }
+                    if is_sep {
+                        let sep_str = "─".repeat(inner.width as usize);
+                        lines.push((msg_idx, Line::from(Span::styled(
+                            sep_str, Style::default().fg(Color::White)
+                        ))));
+                    } else if is_banner {
+                        // Render banner with gradient colors
+                        let content_lines: Vec<&str> = msg.content.lines().collect();
+                        let art_lines = content_lines.iter().take_while(|l| {
+                            let t = l.trim_start();
+                            t.is_empty() || t.starts_with('░') || t.starts_with('█') || t.starts_with('╚')
+                        }).count();
+                        for (i, line) in content_lines.iter().enumerate() {
+                            if line.is_empty() {
+                                lines.push((msg_idx, Line::from("")));
+                            } else if i < art_lines {
+                                let t = i as f32 / art_lines.max(1) as f32;
+                                let color = interpolate_color(theme.banner_gradient.0, theme.banner_gradient.1, t);
+                                lines.push((msg_idx, Line::from(Span::styled(
+                                    line.to_string(),
+                                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                                ))));
+                            } else {
+                                lines.push((msg_idx, Line::from(Span::styled(
+                                    line.to_string(), theme.dim,
+                                ))));
+                            }
+                        }
                     } else {
-                        Style::default().fg(Color::White)
-                    };
-                    if msg.content.starts_with("Cost:") {
-                        lines.push((msg_idx, Line::from("")));
-                    }
-                    for line in msg.content.lines() {
-                        lines.push((msg_idx, Line::from(Span::styled(line.to_string(), style))));
-                    }
-                    if !msg.content.starts_with('─') {
-                        lines.push((msg_idx, Line::from("")));
+                        let style = if is_cost {
+                            theme.thinking_block
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        for line in msg.content.lines() {
+                            lines.push((msg_idx, Line::from(Span::styled(line.to_string(), style))));
+                        }
                     }
                 }
             }
@@ -306,21 +378,27 @@ impl Viewport {
         let stream_idx = self.messages.len();
         if self.is_streaming {
             if let Some(ref think) = self.streaming_think {
-                let header = format!("▾ Thinking ({}  tokens…)", think.token_count);
-                lines.push((stream_idx, Line::from(Span::styled(header, theme.thinking_block))));
+                let elapsed = think.start_time.elapsed().as_secs_f64();
+                if self.think_collapsed {
+                    let header = format!("▸ Thinking ({} tokens, {:.1}s) ",
+                        think.token_count, elapsed);
+                    lines.push((stream_idx, Line::from(vec![
+                        Span::styled(header, theme.thinking_block),
+                        Span::styled("ctrl+o to expand", Style::default().fg(Color::Rgb(160, 160, 170))),
+                    ])));
+                } else {
+                    let header = format!("▾ Thinking ({} tokens, {:.1}s) ",
+                        think.token_count, elapsed);
+                    lines.push((stream_idx, Line::from(vec![
+                        Span::styled(header, theme.thinking_block),
+                        Span::styled("ctrl+o to collapse", Style::default().fg(Color::Rgb(160, 160, 170))),
+                    ])));
 
-                let think_lines: Vec<&str> = think.content.lines().collect();
-                let visible_count = (inner.height as usize / 3).max(3);
-                let start = think_lines.len().saturating_sub(visible_count);
-                for line in &think_lines[start..] {
-                    lines.push((stream_idx, Line::from(Span::styled(
-                        format!("  {}", line),
-                        theme.thinking_block,
-                    ))));
-                }
-                // Padding during thinking
-                for _ in 0..5 {
-                    lines.push((stream_idx, Line::from("")));
+                    for md_line in crate::render_md::render_markdown(&think.content, theme.thinking_block) {
+                        let mut spans = vec![Span::raw("  ".to_string())];
+                        spans.extend(md_line.spans);
+                        lines.push((stream_idx, Line::from(spans)));
+                    }
                 }
             }
 
@@ -328,25 +406,56 @@ impl Viewport {
                 for md_line in crate::render_md::render_markdown(&self.streaming_text, theme.agent_response) {
                     lines.push((stream_idx, md_line));
                 }
-                // Add padding so stats have room when they appear
-                for _ in 0..5 {
-                    lines.push((stream_idx, Line::from("")));
-                }
             }
         }
 
-        // Simple scroll: during streaming always pin to bottom, otherwise use scroll_offset
+        // --- Auto-scroll algorithm ---
+        // 1. Determine cursor position (line index in `lines`)
+        let cursor_line = if self.is_streaming {
+            if !self.think_collapsed {
+                // Thinking expanded
+                if self.streaming_text.is_empty() {
+                    // Still thinking, cursor = end of thinking content
+                    lines.len().saturating_sub(1)
+                } else {
+                    // Outputting or finished — cursor stays at end of thinking panel
+                    // Find where thinking ends (before streaming text starts)
+                    lines.len().saturating_sub(1) // simplified: last line is latest content
+                }
+            } else {
+                // Thinking collapsed
+                if self.streaming_text.is_empty() && self.streaming_think.is_some() {
+                    // Thinking with no output yet — cursor at head of output area
+                    // (the collapsed thinking header line)
+                    lines.len().saturating_sub(1)
+                } else {
+                    // Outputting — cursor at end of streaming text
+                    lines.len().saturating_sub(1)
+                }
+            }
+        } else {
+            // Finished — cursor at very end (including Cost/Time)
+            lines.len().saturating_sub(1)
+        };
+
+        // 2. Compute threshold and start_line
         let total_lines = lines.len();
         let visible_height = inner.height as usize;
+        let threshold = (visible_height * 20 / 100).max(5); // lines from bottom
+        let max_visible_cursor_pos = visible_height.saturating_sub(threshold); // max row for cursor
 
-        // Clamp and apply scroll
         let max_scroll = total_lines.saturating_sub(visible_height);
         if self.scroll_offset > max_scroll {
             self.scroll_offset = max_scroll;
         }
 
         let start_line = if self.auto_scroll {
-            total_lines.saturating_sub(visible_height)
+            // If cursor would be below threshold, scroll up until it's at threshold
+            if cursor_line >= max_visible_cursor_pos {
+                cursor_line - max_visible_cursor_pos
+            } else {
+                0
+            }
         } else {
             max_scroll.saturating_sub(self.scroll_offset)
         };
@@ -358,7 +467,20 @@ impl Viewport {
             .map(|(_, line)| line)
             .collect();
 
-        let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(visible_lines);
         frame.render_widget(paragraph, inner);
+    }
+}
+
+/// Linearly interpolate between two RGB colors.
+fn interpolate_color(from: Color, to: Color, t: f32) -> Color {
+    match (from, to) {
+        (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
+            let r = (r1 as f32 + (r2 as f32 - r1 as f32) * t) as u8;
+            let g = (g1 as f32 + (g2 as f32 - g1 as f32) * t) as u8;
+            let b = (b1 as f32 + (b2 as f32 - b1 as f32) * t) as u8;
+            Color::Rgb(r, g, b)
+        }
+        _ => from,
     }
 }

@@ -240,26 +240,25 @@ User types message
     │       │
     │       └─► Response complete. Ready for next input.
     │
-    └─► User presses `?` (composer empty)
+    └─► User presses `Ctrl+/`
             │
             └─► Query overlay opens
                     │
                     ├─► User types question
                     ├─► Query agent responds (streamed in overlay)
-                    └─► User presses `q` or `Esc` → back to main viewport
+                    └─► User presses `Ctrl+/` or `Esc` → back to main viewport
 ```
 
 ---
 
-## 3. Query Sub-Agent (`?` Overlay)
+## 3. Query Sub-Agent (`Ctrl+/` Overlay)
 
 ### 3.1 Activation
 
-Press `?` when the input composer is empty. This opens a floating overlay panel covering most of the viewport.
+Press `Ctrl+/` to toggle the query overlay. This opens a floating overlay panel covering most of the viewport.
 
 **Cannot be activated when:**
-- The composer has text (inserts literal `?` instead).
-- The overlay is already open (no nesting — single layer only).
+- The overlay is already open (pressing `Ctrl+/` again dismisses it).
 
 ### 3.2 Usage
 
@@ -425,7 +424,7 @@ These are available inside the interactive TUI session (typed in the composer):
 | `Ctrl+A` | Toggle agents panel (expand/fold) |
 | `Ctrl+Shift+P` | Freeze & backup all agents |
 | `Ctrl+Shift+M` | Modify last prompt |
-| `?` | Open query overlay (when composer empty) |
+| `Ctrl+/` | Toggle query overlay |
 
 ### 6.2 Composer
 
