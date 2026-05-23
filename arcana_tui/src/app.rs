@@ -34,6 +34,10 @@ struct App {
     toasts: Vec<Toast>,
     show_banner: bool,
     should_quit: bool,
+    /// True when the user pressed Ctrl+B — ignore remaining tokens.
+    generation_broken: bool,
+    /// When the current LLM stream started (for break-generation timing).
+    stream_started_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl App {
@@ -58,6 +62,8 @@ impl App {
             toasts: Vec::new(),
             show_banner: true,
             should_quit: false,
+            generation_broken: false,
+            stream_started_at: None,
         }
     }
 
@@ -184,12 +190,10 @@ impl App {
                 }
             }
             KeyAction::BreakGeneration => {
-                // Stop LLM generation immediately
+                // Stop LLM generation immediately — flag it, ignore remaining tokens.
                 if self.viewport.is_streaming {
                     self.viewport.is_streaming = false;
-                    // Finalize whatever we have so far
-                    self.viewport.finalize_response_with_stats(None);
-                    self.viewport.add_separator();
+                    self.generation_broken = true;
                 }
             }
             KeyAction::Freeze => {
@@ -271,6 +275,12 @@ impl App {
             }
             KeyAction::Interrupt => {
                 self.overlay.composer.clear();
+            }
+            KeyAction::BreakGeneration => {
+                if self.overlay.is_streaming {
+                    self.overlay.is_streaming = false;
+                    self.generation_broken = true;
+                }
             }
             KeyAction::FocusDown => {
                 self.overlay.scroll_down(3);
@@ -657,6 +667,8 @@ Hotkeys:\n\
                                         // Send to LLM
                                         app.viewport.add_user_message(input.clone());
                                         app.viewport.is_streaming = true;
+                                        app.generation_broken = false;
+                                        app.stream_started_at = Some(chrono::Utc::now());
                                         app.show_banner = false;
 
                                         let authority_context =
@@ -737,6 +749,8 @@ Hotkeys:\n\
                                     tool_calls: Vec::new(),
                                 });
                                 app.overlay.is_streaming = true;
+                                app.generation_broken = false;
+                                app.stream_started_at = Some(chrono::Utc::now());
 
                                 let msgs = app.overlay.build_messages();
                                 crate::llm::spawn_overlay_stream(&config, msgs, event_tx.clone());
@@ -769,6 +783,9 @@ Hotkeys:\n\
                 }
                 AppEvent::Resize(_, _) => {}
                 AppEvent::Token(token) => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     // Thinking tokens are prefixed with \x00THINK:
                     if let Some(think_text) = token.strip_prefix("\x00THINK:") {
                         app.viewport.append_think_token(think_text);
@@ -777,12 +794,41 @@ Hotkeys:\n\
                     }
                 }
                 AppEvent::ThinkStart => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     app.viewport.start_thinking();
                 }
                 AppEvent::ThinkEnd => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     app.viewport.end_thinking();
                 }
                 AppEvent::ResponseComplete(stats) => {
+                    if app.generation_broken {
+                        // User pressed Ctrl+B — show break message with timing.
+                        let elapsed = app
+                            .stream_started_at
+                            .map(|t| {
+                                let dur = chrono::Utc::now() - t;
+                                format!("{:.1}s", dur.num_milliseconds() as f64 / 1000.0)
+                            })
+                            .unwrap_or_else(|| "?".into());
+                        app.viewport.finalize_response_with_stats(None);
+                        app.viewport.messages.push(Message {
+                            role: MessageRole::System,
+                            content: format!("[Break Generation]\nTime: {elapsed}"),
+                            timestamp: chrono::Utc::now(),
+                            thinking: None,
+                            tool_calls: Vec::new(),
+                        });
+                        app.viewport.add_separator();
+                        app.generation_broken = false;
+                        app.stream_started_at = None;
+                        continue;
+                    }
+
                     // Store the response in conversation history
                     let response_text = app.viewport.streaming_text.clone();
                     let thinking_text = app
@@ -830,6 +876,9 @@ Hotkeys:\n\
                 }
                 // Overlay (query agent) events
                 AppEvent::OverlayToken(token) => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     if let Some(think_text) = token.strip_prefix("\x00THINK:") {
                         app.overlay.append_think_token(think_text);
                     } else {
@@ -837,12 +886,38 @@ Hotkeys:\n\
                     }
                 }
                 AppEvent::OverlayThinkStart => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     app.overlay.start_thinking();
                 }
                 AppEvent::OverlayThinkEnd => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     app.overlay.end_thinking();
                 }
                 AppEvent::OverlayResponseComplete => {
+                    if app.generation_broken {
+                        let elapsed = app
+                            .stream_started_at
+                            .map(|t| {
+                                let dur = chrono::Utc::now() - t;
+                                format!("{:.1}s", dur.num_milliseconds() as f64 / 1000.0)
+                            })
+                            .unwrap_or_else(|| "?".into());
+                        app.overlay.messages.push(Message {
+                            role: MessageRole::System,
+                            content: format!("[Break Generation]\nTime: {elapsed}"),
+                            timestamp: chrono::Utc::now(),
+                            thinking: None,
+                            tool_calls: Vec::new(),
+                        });
+                        app.generation_broken = false;
+                        app.stream_started_at = None;
+                        app.overlay.is_streaming = false;
+                        continue;
+                    }
                     app.overlay.finalize_response();
                 }
                 AppEvent::OverlayError(msg) => {
