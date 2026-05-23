@@ -33,9 +33,6 @@ pub struct Cli {
     #[arg(long)]
     pub factory: bool,
 
-    /// Project root directory (defaults to current directory with confirmation)
-    pub project: Option<PathBuf>,
-
     #[command(subcommand)]
     pub command: Option<Command>,
 }

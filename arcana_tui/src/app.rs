@@ -255,7 +255,8 @@ impl App {
                 self.overlay.composer.jump_bottom();
             }
             KeyAction::Up => {
-                if self.overlay.composer.input.is_empty() {
+                if self.overlay.composer.is_empty() || self.overlay.composer.history_index.is_some()
+                {
                     self.overlay.composer.recall_previous();
                 } else {
                     self.overlay.composer.move_up();
@@ -504,7 +505,8 @@ Hotkeys:\n\
   Ctrl+Enter     New line in prompt\n\
   Home/End       Start/end of current line\n\
   Ctrl+b         Stop LLM generation\n\
-  Ctrl+c         Clear prompt"
+  Ctrl+c         Clear prompt\n\
+  \\quit          Exit session"
                                                 .into(),
                                         );
                                     }
