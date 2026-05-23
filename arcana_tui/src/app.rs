@@ -753,10 +753,10 @@ fn authority_context_for_query(query: &str) -> String {
 
     let mut sections = Vec::new();
     for url in urls {
-        match authority_fetch_url(socket_path, &url) {
+        match authority_url_context(socket_path, &url) {
             Ok(Some(section)) => sections.push(section),
             Ok(None) => {}
-            Err(e) => sections.push(format!("Authority fetch failed for {url}: {e}")),
+            Err(e) => sections.push(format!("Authority URL context failed for {url}: {e}")),
         }
     }
 
@@ -767,16 +767,8 @@ fn authority_context_for_query(query: &str) -> String {
     }
 }
 
-fn authority_fetch_url(socket_path: &Path, url: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let mut stream = UnixStream::connect(socket_path)?;
-    let req = serde_json::json!({"op": "fetch", "url": url, "tag": null});
-    writeln!(stream, "{}", req)?;
-    stream.flush()?;
-
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let resp: serde_json::Value = serde_json::from_str(line.trim())?;
+fn authority_url_context(socket_path: &Path, url: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let resp = authority_request(socket_path, serde_json::json!({"op": "fetch", "url": url, "tag": null}))?;
 
     if resp["status"] == "denied" {
         let reason = resp["reason"].as_str().unwrap_or("unknown reason");
@@ -795,10 +787,40 @@ fn authority_fetch_url(socket_path: &Path, url: &str) -> Result<Option<String>, 
     let text = if looks_like_pdf(&bytes) {
         format!("[PDF fetched: {} bytes]", bytes.len())
     } else {
-        html_to_text(&String::from_utf8_lossy(&bytes))
+        authority_w3m_dump(socket_path, path)
+            .unwrap_or_else(|| html_to_text(&String::from_utf8_lossy(&bytes)))
     };
 
-    Ok(Some(format!("Source: {url}\n{}", truncate_chars(&text, 12_000))))
+    Ok(Some(format!("Source: {url}\n{}", truncate_chars(&text, 3_000))))
+}
+
+fn authority_w3m_dump(socket_path: &Path, path: &str) -> Option<String> {
+    let resp = authority_request(
+        socket_path,
+        serde_json::json!({"op": "exec", "cmd": "w3m", "args": ["-dump", "-T", "text/html", path]}),
+    ).ok()?;
+
+    if resp["status"] != "exec_result" || resp["code"].as_i64() != Some(0) {
+        return None;
+    }
+
+    let stdout = resp["stdout"].as_str()?.trim();
+    if stdout.is_empty() {
+        None
+    } else {
+        Some(stdout.to_string())
+    }
+}
+
+fn authority_request(socket_path: &Path, req: serde_json::Value) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut stream = UnixStream::connect(socket_path)?;
+    writeln!(stream, "{}", req)?;
+    stream.flush()?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    Ok(serde_json::from_str(line.trim())?)
 }
 
 fn extract_urls(text: &str) -> Vec<String> {
