@@ -1,5 +1,6 @@
 use futures::StreamExt;
 use reqwest::Client;
+use std::time::Instant;
 use tokio::sync::mpsc;
 
 use crate::config::Config;
@@ -65,6 +66,7 @@ async fn do_stream(
     tx: &mpsc::UnboundedSender<AppEvent>,
     is_overlay: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let started_at = Instant::now();
     let mut body = serde_json::json!({
         "model": model,
         "messages": messages,
@@ -112,8 +114,8 @@ async fn do_stream(
                     let stats = usage_data.map(|u| ResponseStats {
                         input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as usize,
                         output_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as usize,
-                        cost: 0.0,
-                        duration_secs: 0.0,
+                        cost: estimate_cost(model, &u),
+                        duration_secs: started_at.elapsed().as_secs_f64(),
                     });
                     let _ = tx.send(AppEvent::ResponseComplete(stats));
                 }
@@ -184,10 +186,53 @@ async fn do_stream(
         let stats = usage_data.map(|u| ResponseStats {
             input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as usize,
             output_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as usize,
-            cost: 0.0,
-            duration_secs: 0.0,
+            cost: estimate_cost(model, &u),
+            duration_secs: started_at.elapsed().as_secs_f64(),
         });
         let _ = tx.send(AppEvent::ResponseComplete(stats));
     }
     Ok(())
+}
+
+pub fn estimate_cost(model: &str, usage: &serde_json::Value) -> f64 {
+    let output_tokens = usage["completion_tokens"].as_u64().unwrap_or(0) as f64;
+    let prompt_tokens = usage["prompt_tokens"].as_u64().unwrap_or(0) as f64;
+    let cache_hit_tokens = usage["prompt_cache_hit_tokens"].as_u64().unwrap_or(0) as f64;
+    let cache_miss_tokens = usage["prompt_cache_miss_tokens"]
+        .as_u64()
+        .map(|n| n as f64)
+        .unwrap_or_else(|| (prompt_tokens - cache_hit_tokens).max(0.0));
+
+    if let Some(price) = pricing_for_model(model) {
+        ((cache_hit_tokens * price.input_cache_hit)
+            + (cache_miss_tokens * price.input_cache_miss)
+            + (output_tokens * price.output))
+            / 1_000_000.0
+    } else {
+        0.0
+    }
+}
+
+struct ModelPricing {
+    input_cache_hit: f64,
+    input_cache_miss: f64,
+    output: f64,
+}
+
+fn pricing_for_model(model: &str) -> Option<ModelPricing> {
+    match model {
+        // DeepSeek official API prices are USD per 1M tokens as of 2026-05-22:
+        // https://api-docs.deepseek.com/quick_start/pricing/
+        "deepseek-v4-pro" => Some(ModelPricing {
+            input_cache_hit: 0.003625,
+            input_cache_miss: 0.435,
+            output: 0.87,
+        }),
+        "deepseek-v4-flash" | "deepseek-chat" | "deepseek-reasoner" => Some(ModelPricing {
+            input_cache_hit: 0.0028,
+            input_cache_miss: 0.14,
+            output: 0.28,
+        }),
+        _ => None,
+    }
 }

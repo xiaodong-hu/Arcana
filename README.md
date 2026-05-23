@@ -333,11 +333,13 @@ arcana
 
 ```bash
 arcana                          # Interactive session
+arcana <project-path>           # Launch in specific project directory
 arcana -q "explain main.rs"    # Single-shot query
 arcana --model deepseek-v4-flash  # Override model
 arcana config show              # View configuration
 arcana config edit              # Edit config in $EDITOR
-arcana --reset                  # Factory reset
+arcana --reset [<project>]      # Reset project workspace (confirmation required)
+arcana --reset --factory        # Reset global ~/.arcana/ (extra warning + confirmation)
 arcana check                    # System health check
 arcana resume --last            # Resume previous session
 ```
@@ -361,16 +363,21 @@ arcana resume --last            # Resume previous session
 
 ### TUI Commands (prefix: `\`)
 
+Type `\` then press `↓` to browse all commands with arrow keys. Press `Esc` to exit selection.
+
 | Command | Action |
 |---------|--------|
 | `\quit` | Exit session |
 | `\clear` | Clear viewport |
 | `\status` | Show model/token info |
 | `\usage` | Session token/cost statistics |
+| `\working_dir` | Show current working directory |
 | `\check` | System health check |
 | `\auth list` | Show authorized commands |
 | `\auth add <cmd>` | Add to allow list |
 | `\auth remove <cmd>` | Remove from allow list |
+| `\auth edit` | Open authority.toml in `$EDITOR` |
+| `\help` | Show all commands and hotkeys |
 | `\auth edit` | Open authority.toml in `$EDITOR` |
 | `\help` | Show all commands and hotkeys |
 
@@ -428,7 +435,8 @@ Arcana-Agent/
 - [x] `arcana onboard` — interactive & non-interactive setup wizard
 - [x] `arcana -q "..."` — single-shot LLM query (DeepSeek API, with thinking mode)
 - [x] `arcana version` / `arcana check` / `arcana config show|path|edit`
-- [x] `arcana --reset` — factory reset
+- [x] `arcana --reset [<project>]` — reset project workspace (with confirmation)
+- [x] `arcana --reset --factory` — reset global config (with extra warning)
 - [x] Interactive TUI shell (viewport, composer, status bar, keybindings)
 - [x] Collapsible task panel (Ctrl+T) with tree-style indicators
 - [x] Interactive LLM streaming — TUI session sends messages to DeepSeek with SSE streaming

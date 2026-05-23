@@ -138,6 +138,8 @@ pub enum KeyAction {
     BreakGeneration,
     /// Ctrl+Shift+P (freeze)
     Freeze,
+    /// Ctrl+Y (toggle terminal text selection mode)
+    ToggleSelectionMode,
     /// Ctrl+O (expand)
     Expand,
     /// Ctrl+G (open editor)
@@ -177,6 +179,7 @@ pub fn classify_key(key: &KeyEvent) -> KeyAction {
         KeyCode::Char('j') if ctrl => KeyAction::FocusDown,
         KeyCode::Char('k') if ctrl => KeyAction::FocusUp,
         KeyCode::Char('o') if ctrl => KeyAction::Expand,
+        KeyCode::Char('y') if ctrl => KeyAction::ToggleSelectionMode,
         KeyCode::Char('w') if ctrl => KeyAction::DeleteWordLeft,
         KeyCode::Char('h') if ctrl => KeyAction::WordLeft,
         KeyCode::Char('l') if ctrl => KeyAction::WordRight,

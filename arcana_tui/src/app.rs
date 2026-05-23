@@ -153,13 +153,17 @@ impl App {
                 self.composer.move_end();
             }
             KeyAction::Up => {
-                if self.composer.is_empty() || self.composer.history_index.is_some() {
+                if self.composer.input.is_empty() {
                     self.composer.recall_previous();
+                } else {
+                    self.composer.move_up();
                 }
             }
             KeyAction::Down => {
-                if self.composer.history_index.is_some() {
+                if self.composer.input.is_empty() {
                     self.composer.recall_next();
+                } else {
+                    self.composer.move_down();
                 }
             }
             KeyAction::PageUp => {
@@ -254,11 +258,15 @@ impl App {
                 if self.overlay.composer.is_empty() || self.overlay.composer.history_index.is_some()
                 {
                     self.overlay.composer.recall_previous();
+                } else {
+                    self.overlay.composer.move_up();
                 }
             }
             KeyAction::Down => {
-                if self.overlay.composer.history_index.is_some() {
+                if self.overlay.composer.input.is_empty() {
                     self.overlay.composer.recall_next();
+                } else {
+                    self.overlay.composer.move_down();
                 }
             }
             KeyAction::Interrupt => {
@@ -425,6 +433,38 @@ pub async fn interactive(
                     let action = classify_key(&key);
                     match app.mode {
                         ViewMode::Main => {
+                            // --- Command selection mode (↑↓ browse, Esc exit) ---
+                            if app.composer.is_in_selection_mode() {
+                                match action {
+                                    KeyAction::Up => {
+                                        app.composer.select_prev();
+                                        continue;
+                                    }
+                                    KeyAction::Down => {
+                                        app.composer.select_next();
+                                        continue;
+                                    }
+                                    KeyAction::Escape => {
+                                        app.composer.exit_selection_mode();
+                                        continue;
+                                    }
+                                    KeyAction::Enter => {
+                                        app.composer.fill_selected_command();
+                                        continue;
+                                    }
+                                    KeyAction::Char(_) | KeyAction::Tab => {
+                                        // Typing or tab exits selection mode,
+                                        // then fall through to normal handling below.
+                                        app.composer.exit_selection_mode();
+                                    }
+                                    _ => {} // other keys fall through normally
+                                }
+                            }
+                            // --- Enter selection mode on Down when input is `\` ---
+                            if action == KeyAction::Down && app.composer.input == "\\" {
+                                app.composer.maybe_enter_selection_mode();
+                                continue;
+                            }
                             // Check if this is an Enter that will send a message
                             if action == KeyAction::Enter && !app.composer.is_empty() {
                                 let input = app.composer.take_input();
@@ -446,6 +486,7 @@ pub async fn interactive(
   \\clear         Clear viewport\n\
   \\status        Show model/token info\n\
   \\usage         Session token/cost stats\n\
+  \\working_dir   Show current working directory\n\
   \\check         System health check\n\
   \\auth list     Show authorized commands\n\
   \\auth add      Add command to allow list\n\
@@ -486,6 +527,14 @@ Hotkeys:\n\
                                         app.viewport.add_error_message(format!(
                                             "Session Usage:\n  Requests: {}\n  Tokens: {} in / {} out\n  Total cost: {:.4}",
                                             app.status.session_requests, in_str, out_str, app.status.session_cost
+                                        ));
+                                    }
+                                    "\\working_dir" => {
+                                        let cwd = std::env::current_dir()
+                                            .map(|p| p.display().to_string())
+                                            .unwrap_or_else(|_| "<unknown>".into());
+                                        app.viewport.add_error_message(format!(
+                                            "Working directory:\n  {cwd}\n\nWorkspace:\n  {cwd}/.arcana/"
                                         ));
                                     }
                                     "\\auth" | "\\auth list" => {

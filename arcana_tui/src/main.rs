@@ -19,6 +19,8 @@ mod types;
 mod viewport;
 
 use clap::Parser;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process;
 
 use cli::{Cli, Command};
@@ -28,18 +30,31 @@ use config::Config;
 async fn main() {
     let cli = Cli::parse();
 
-    // Handle --reset: remove ~/.arcana then recreate
+    // Handle --reset: remove project workspace or factory config with confirmation.
     if cli.reset {
-        if let Err(e) = Config::reset() {
-            eprintln!("[arcana] Failed to reset config: {}", e);
-            process::exit(1);
+        if cli.factory {
+            factory_reset_with_confirmation();
+        } else {
+            let project = cli
+                .project
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            project_reset_with_confirmation(&project);
         }
-        println!("[arcana] Configuration reset.");
+        // Reset is a one-shot operation — exit after completion.
+        process::exit(0);
+    }
+
+    // --factory without --reset is an error.
+    if cli.factory {
+        eprintln!("[Arcana] Error: `--factory` requires `--reset`.");
+        eprintln!("Usage: arcana --reset           → reset project workspace ./.arcana/");
+        eprintln!("       arcana --reset --factory → reset global config ~/.arcana/");
+        process::exit(1);
     }
 
     // Ensure ~/.arcana exists on every launch
     if let Err(e) = Config::ensure_home() {
-        eprintln!("[arcana] Failed to create ~/.arcana: {}", e);
+        eprintln!("[Arcana] Failed to create ~/.arcana: {}", e);
         process::exit(1);
     }
 
@@ -60,6 +75,16 @@ async fn main() {
         Some(Command::Auth(args)) => auth_cmd::run(args).await,
         Some(Command::Config(args)) => config_cmd::run(args).await,
         None => {
+            // Resolve project path — may prompt user interactively.
+            let project = match resolve_project_path(cli.project) {
+                Some(p) => p,
+                None => process::exit(0),
+            };
+            // All relative paths (`.arcana/...`) resolve against the project root.
+            if let Err(e) = std::env::set_current_dir(&project) {
+                eprintln!("[Arcana] Cannot enter {:?}: {}", project, e);
+                process::exit(1);
+            }
             if let Some(query) = cli.query {
                 app::single_shot(&query, &cli.model, &cli.provider).await
             } else {
@@ -69,8 +94,190 @@ async fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("[arcana] Error: {}", e);
+        eprintln!("[Arcana] Error: {}", e);
         process::exit(1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Project path resolution with interactive confirmation
+// ---------------------------------------------------------------------------
+
+/// Resolve the project root directory, prompting the user when necessary.
+///
+/// - If `project_arg` is `Some(path)`: use that path directly (canonicalised).
+/// - If `project_arg` is `None`: ask the user whether to use the current
+///   working directory (`y`/`c` = yes, `n`/`q` = quit).
+///
+/// Once a path is settled, if it lacks a `.arcana/` workspace the user is
+/// asked whether to create one.  Returns `None` when the user declines.
+fn resolve_project_path(project_arg: Option<PathBuf>) -> Option<PathBuf> {
+    if let Some(ref path) = project_arg {
+        let canonical = canonicalize(path);
+        ensure_workspace(&canonical)
+    } else {
+        let cwd = std::env::current_dir().ok()?;
+        eprintln!();
+        eprintln!(
+            "Project path for `Arcana-Agent` NOT specified. \
+             Set current path `{}` to launch?",
+            cwd.display()
+        );
+        eprint!("    - Yes and Continue  [y/c]\n    - No and Quit       [n/q]\n> ");
+        io::stderr().flush().ok();
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).ok()?;
+        match input.trim().to_lowercase().as_str() {
+            "y" | "yes" | "c" | "continue" => ensure_workspace(&cwd),
+            _ => {
+                eprintln!("Aborted.");
+                None
+            }
+        }
+    }
+}
+
+/// Check whether `path/.arcana` exists; if not, ask the user to create it.
+fn ensure_workspace(path: &Path) -> Option<PathBuf> {
+    let arcana_dir = path.join(".arcana");
+    if arcana_dir.exists() {
+        return Some(path.to_path_buf());
+    }
+
+    eprintln!();
+    eprintln!(
+        "`Arcana-Agent` launch for the first time in this project. \
+         Create a project-level workspace `{}/.arcana`?",
+        path.display()
+    );
+    eprint!("    - Yes and Continue  [y/c]\n    - No and Quit       [n/q]\n> ");
+    io::stderr().flush().ok();
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).ok()?;
+    match input.trim().to_lowercase().as_str() {
+        "y" | "yes" | "c" | "continue" => {
+            if let Err(e) = std::fs::create_dir_all(&arcana_dir) {
+                eprintln!("[Arcana] Failed to create workspace: {}", e);
+                return None;
+            }
+            eprintln!("[Arcana] Created workspace at {}", arcana_dir.display());
+            Some(path.to_path_buf())
+        }
+        _ => {
+            eprintln!("Aborted.");
+            None
+        }
+    }
+}
+
+/// Best-effort canonicalisation; falls back to the original path.
+fn canonicalize(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+// ---------------------------------------------------------------------------
+// Reset operations with interactive confirmation
+// ---------------------------------------------------------------------------
+
+/// Reset the project-level workspace `./.arcana/` after user confirmation.
+fn project_reset_with_confirmation(project: &Path) {
+    let arcana_dir = canonicalize(project).join(".arcana");
+
+    if !arcana_dir.exists() {
+        eprintln!(
+            "[Arcana] No workspace found at {}. Nothing to reset.",
+            arcana_dir.display()
+        );
+        return;
+    }
+
+    eprintln!();
+    eprintln!(
+        "You are about to DELETE the project workspace at\n  {}/\n\
+         This includes ALL session history, access rules, and cached data for this project.\n[WARNING] This action CANNOT be undone!\n",
+        arcana_dir.display()
+    );
+    eprint!("Type 'yes' to confirm, anything else to abort: ");
+    io::stderr().flush().ok();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        eprintln!("\n[Arcana] Aborted.");
+        return;
+    }
+    if input.trim() != "yes" {
+        eprintln!("[Arcana] Aborted.");
+        return;
+    }
+
+    match std::fs::remove_dir_all(&arcana_dir) {
+        Ok(()) => eprintln!("[Arcana] Removed {}", arcana_dir.display()),
+        Err(e) => eprintln!("[Arcana] Failed to remove workspace: {}", e),
+    }
+}
+
+/// Reset the global `~/.arcana/` directory after extra warning + confirmation.
+fn factory_reset_with_confirmation() {
+    let home = match dirs::home_dir() {
+        Some(d) => d,
+        None => {
+            eprintln!("[Arcana] Cannot determine home directory.");
+            return;
+        }
+    };
+    let global_dir = home.join(".arcana");
+
+    if !global_dir.exists() {
+        eprintln!(
+            "[Arcana] No global config found at {}. Nothing to reset.",
+            global_dir.display()
+        );
+        return;
+    }
+
+    eprintln!();
+    eprintln!("╔══════════════════════════════════════════════════════════════╗");
+    eprintln!("║                      ⚠  FACTORY  RESET  ⚠                    ║");
+    eprintln!("╠══════════════════════════════════════════════════════════════╣");
+    eprintln!("║  You are about to DELETE the ENTIRE Arcana configuration:    ║");
+    eprintln!("║                                                              ║");
+    eprintln!("║    {:<54}    ║", global_dir.display());
+    eprintln!("║                                                              ║");
+    eprintln!("║  This includes:                                              ║");
+    eprintln!("║    • Global config (providers, models, API keys)             ║");
+    eprintln!("║    • Agent personality (SOUL.md)                             ║");
+    eprintln!("║    • User portrait (USER.md)                                 ║");
+    eprintln!("║    • Authority rules (~/.arcana/authority.toml)              ║");
+    eprintln!("║    • Knowledge & error memory databases                      ║");
+    eprintln!("║    • All installed skills                                    ║");
+    eprintln!("║    • Embedding model                                         ║");
+    eprintln!("║                                                              ║");
+    eprintln!("║  [WARNING] This action CANNOT be undone!                     ║");
+    eprintln!("╚══════════════════════════════════════════════════════════════╝");
+    eprintln!();
+    eprint!("Type 'YES DELETE' (exactly) to confirm, anything else to abort: ");
+    io::stderr().flush().ok();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        eprintln!("\n[Arcana] Aborted.");
+        return;
+    }
+    if input.trim() != "YES DELETE" {
+        eprintln!("[Arcana] Aborted.");
+        return;
+    }
+
+    match std::fs::remove_dir_all(&global_dir) {
+        Ok(()) => {
+            eprintln!(
+                "[Arcana] Removed {}. Run `arcana onboard` to set up again.",
+                global_dir.display()
+            );
+        }
+        Err(e) => eprintln!("[Arcana] Failed to remove global config: {}", e),
     }
 }
 
@@ -135,7 +342,7 @@ mod session_cmd {
 }
 
 mod auth_cmd {
-    use crate::cli::{AuthArgs, AuthAction};
+    use crate::cli::{AuthAction, AuthArgs};
     use serde::{Deserialize, Serialize};
     use std::path::PathBuf;
 
@@ -177,30 +384,76 @@ mod auth_cmd {
 
     fn default_allow() -> Vec<String> {
         vec![
-            "cargo build", "cargo test", "cargo clippy", "cargo fmt",
-            "git status", "git diff", "git log",
-            "ls", "cat", "find", "grep", "rg",
-            "curl", "wget", "w3m",
-            "python3", "node", "make",
-            "head", "tail", "wc", "sort", "uniq", "sed", "awk", "jq", "tree",
-        ].into_iter().map(String::from).collect()
+            "cargo build",
+            "cargo test",
+            "cargo clippy",
+            "cargo fmt",
+            "git status",
+            "git diff",
+            "git log",
+            "ls",
+            "cat",
+            "find",
+            "grep",
+            "rg",
+            "curl",
+            "wget",
+            "w3m",
+            "python3",
+            "node",
+            "make",
+            "head",
+            "tail",
+            "wc",
+            "sort",
+            "uniq",
+            "sed",
+            "awk",
+            "jq",
+            "tree",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
     }
 
     fn default_confirm() -> Vec<String> {
         vec!["git push", "git commit", "rm -rf", "sudo *"]
-            .into_iter().map(String::from).collect()
+            .into_iter()
+            .map(String::from)
+            .collect()
     }
 
     fn default_network_allow() -> Vec<String> {
         vec![
-            "api.deepseek.com", "api.openai.com", "api.anthropic.com",
-            "scholar.google.com", "arxiv.org", "*.arxiv.org",
-            "en.wikipedia.org", "*.wikipedia.org", "wiki.archlinux.org",
-            "stackoverflow.com", "*.stackoverflow.com", "*.stackexchange.com", "superuser.com",
-            "docs.rs", "crates.io", "github.com", "raw.githubusercontent.com", "gitlab.com",
-            "pkg.go.dev", "pypi.org", "npmjs.com",
-            "zhihu.com", "*.zhihu.com", "juejin.cn",
-        ].into_iter().map(String::from).collect()
+            "api.deepseek.com",
+            "api.openai.com",
+            "api.anthropic.com",
+            "scholar.google.com",
+            "arxiv.org",
+            "*.arxiv.org",
+            "en.wikipedia.org",
+            "*.wikipedia.org",
+            "wiki.archlinux.org",
+            "stackoverflow.com",
+            "*.stackoverflow.com",
+            "*.stackexchange.com",
+            "superuser.com",
+            "docs.rs",
+            "crates.io",
+            "github.com",
+            "raw.githubusercontent.com",
+            "gitlab.com",
+            "pkg.go.dev",
+            "pypi.org",
+            "npmjs.com",
+            "zhihu.com",
+            "*.zhihu.com",
+            "juejin.cn",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
     }
 
     fn default_network_deny() -> Vec<String> {
@@ -213,7 +466,9 @@ mod auth_cmd {
 
     fn default_fs_deny() -> Vec<String> {
         vec!["~/.ssh", "~/.gnupg", "~/.arcana/authority.toml"]
-            .into_iter().map(String::from).collect()
+            .into_iter()
+            .map(String::from)
+            .collect()
     }
 
     impl Default for AuthorityConfig {
@@ -328,13 +583,22 @@ mod auth_cmd {
                 save(&config)?;
                 println!("  ✓ Authority config reset to defaults.");
             }
+            Some(AuthAction::Instruction) => {
+                let path = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".arcana/INSTRUCTION.md");
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => println!("{}", content),
+                    Err(_) => println!("  No instruction file found at {}", path.display()),
+                }
+            }
         }
         Ok(())
     }
 }
 
 mod config_cmd {
-    use crate::cli::{ConfigArgs, ConfigAction};
+    use crate::cli::{ConfigAction, ConfigArgs};
     use crate::config::Config;
 
     pub async fn run(args: ConfigArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -350,11 +614,9 @@ mod config_cmd {
             Some(ConfigAction::Edit) => {
                 let path = Config::path()?;
                 let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".into());
-                let status = std::process::Command::new(&editor)
-                    .arg(&path)
-                    .status()?;
+                let status = std::process::Command::new(&editor).arg(&path).status()?;
                 if !status.success() {
-                    eprintln!("[arcana] Editor exited with non-zero status");
+                    eprintln!("[Arcana] Editor exited with non-zero status");
                 }
             }
         }

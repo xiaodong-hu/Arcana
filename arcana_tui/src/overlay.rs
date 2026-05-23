@@ -29,6 +29,8 @@ pub struct QueryOverlay {
     pub streaming_think: Option<StreamingThink>,
     /// Whether thinking blocks are expanded
     pub thinking_expanded: bool,
+    /// Last rendered visual line count, used to keep manual-scroll views stable as content grows.
+    last_total_lines: usize,
 }
 
 #[derive(Debug)]
@@ -54,6 +56,7 @@ impl Default for QueryOverlay {
             streaming_text: String::new(),
             streaming_think: None,
             thinking_expanded: false,
+            last_total_lines: 0,
         }
     }
 }
@@ -328,6 +331,13 @@ impl QueryOverlay {
         let total = lines.len();
         let threshold = (visible_height * 20 / 100).max(5);
         let max_visible_cursor_pos = visible_height.saturating_sub(threshold);
+
+        if !self.auto_scroll && self.last_total_lines > 0 && total > self.last_total_lines {
+            self.scroll_offset = self
+                .scroll_offset
+                .saturating_add(total - self.last_total_lines);
+        }
+        self.last_total_lines = total;
 
         let max_scroll = total.saturating_sub(visible_height);
         if self.scroll_offset > max_scroll {
