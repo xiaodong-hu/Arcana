@@ -21,6 +21,8 @@ pub struct Viewport {
     pub is_streaming: bool,
     /// Whether thinking panels (including streaming) are collapsed
     pub think_collapsed: bool,
+    /// Last rendered visual line count, used to keep manual-scroll views stable as content grows.
+    last_total_lines: usize,
 }
 
 #[derive(Debug)]
@@ -40,6 +42,7 @@ impl Default for Viewport {
             streaming_text: String::new(),
             is_streaming: false,
             think_collapsed: true,
+            last_total_lines: 0,
         }
     }
 }
@@ -475,6 +478,13 @@ impl Viewport {
         let visible_height = inner.height as usize;
         let threshold = (visible_height * 20 / 100).max(5); // lines from bottom
         let max_visible_cursor_pos = visible_height.saturating_sub(threshold); // max row for cursor
+
+        if !self.auto_scroll && self.last_total_lines > 0 && total_lines > self.last_total_lines {
+            self.scroll_offset = self
+                .scroll_offset
+                .saturating_add(total_lines - self.last_total_lines);
+        }
+        self.last_total_lines = total_lines;
 
         let max_scroll = total_lines.saturating_sub(visible_height);
         if self.scroll_offset > max_scroll {

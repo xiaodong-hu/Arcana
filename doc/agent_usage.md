@@ -99,21 +99,21 @@ Arcana reads these at process start. If the key is found in the environment, it 
 
 ### 1.3 Workspace Initialization
 
-When Arcana is first run inside a project directory (any directory without an existing `.arcana/` folder):
+When Arcana is first run for a project directory (any directory without an existing `.arcana/` folder):
 
 ```bash
 cd ~/projects/my-app
-arcana
+arcana .
 ```
 
-Arcana detects no `.arcana/` workspace and offers to create one:
+Arcana creates the project workspace for explicit project paths. If no project path is supplied, Arcana asks before using the launch directory:
 
 ```
-No Arcana workspace found in ~/projects/my-app.
-Create .arcana/ workspace? [Y/n]
+Project path not specified, set to Arcana launch path `/home/user/projects/my-app` by default.
+Continue [y/c] or Abort and Exit [n/a]:
 ```
 
-If accepted, creates:
+Then it creates:
 
 ```
 my-app/.arcana/
@@ -168,16 +168,19 @@ Import settings? [Y/n/select]
 
 ```bash
 # Start interactive session in current directory
+arcana .
+
+# Prompt before using the launch directory as project
 arcana
 
 # Start with a specific model
-arcana --model deepseek-v4-flash
+arcana . --model deepseek-v4-flash
 
 # Start with a specific provider
-arcana --provider openai --model gpt-4o
+arcana . --provider openai --model gpt-4o
 
 # Single-shot query (non-interactive, prints response and exits)
-arcana -q "explain the parse function in src/parser.rs"
+arcana . -q "explain the parse function in src/parser.rs"
 
 # Resume last session
 arcana resume --last
@@ -309,12 +312,14 @@ The query agent remains alive after dismissal. Its overlay conversation is kept 
 ### 4.1 Top-Level Commands
 
 ```bash
-arcana                          # Start interactive session
+arcana <project>                # Start interactive session for a project
+arcana                          # Ask before using launch path as project
 arcana onboard                  # First-time setup wizard
-arcana -q "prompt"              # Single-shot query
+arcana <project> -q "prompt"    # Single-shot query
 arcana --model <model>          # Override model for this session
 arcana --provider <provider>    # Override provider for this session
-arcana --reset                  # Remove ~/.arcana and recreate (factory reset)
+arcana --reset [<project>]      # Reset project workspace ./.arcana/ (confirmation required)
+arcana --reset --factory        # Reset global ~/.arcana/ (extra warning + confirmation)
 arcana resume [--last | <id>]   # Resume a session
 arcana recover <project> [--to-seq N]  # Recover project state (see authority design)
 arcana check                    # Check setup & connectivity
@@ -377,37 +382,30 @@ arcana config                   # Show current configuration (same as `arcana co
 arcana config show              # Print effective config as TOML
 arcana config edit              # Open ~/.arcana/config.toml in $EDITOR
 arcana config path              # Print config file path
-arcana --reset                  # Remove ~/.arcana entirely and recreate (factory reset)
+arcana --reset [<project>]      # Remove project workspace (confirmation required)
+arcana --reset --factory        # Remove ~/.arcana/ entirely (extra warning + confirmation)
 ```
 
 Note: `~/.arcana/` is automatically created on every launch if it doesn't exist.
 
 ---
 
-## 5. In-Session Slash Commands
+## 5. In-Session TUI Commands
 
 These are available inside the interactive TUI session (typed in the composer):
 
 | Command | Description |
 |---------|-------------|
-| `/help` | Show all available commands |
-| `/model [name]` | Show or change active model |
-| `/provider [name]` | Show or change provider |
-| `/skills` | List active skills |
-| `/skill <name>` | Activate/deactivate a skill |
-| `/agents` | Show sub-agent tree (status, turns, scope) |
-| `/tasks` | Show task progress |
-| `/freeze` | Freeze all agents, save state |
-| `/resume` | Resume from last freeze |
-| `/memory` | Show memory stats |
-| `/usage` | Token usage breakdown (input/output, cache hits, cost) |
-| `/compress` | Force context compression |
-| `/status` | Session info (model, tokens, duration, files touched) |
-| `/title <name>` | Name the current session |
-| `/theme [name]` | Show or change color theme |
-| `/verbose` | Cycle detail level: off → collapsed → expanded |
-| `/clear` | Clear viewport (history preserved, just visual reset) |
-| `/export` | Export current session to file |
+| `\help` | Show all available commands |
+| `\clear` | Clear viewport |
+| `\status` | Show model/token info |
+| `\usage` | Session token/cost statistics |
+| `\check` | System health check |
+| `\auth list` | Show authorized commands |
+| `\auth instruction` | Show `~/.arcana/INSTRUCTION.md` |
+| `\auth add <cmd>` | Add command to allow list |
+| `\auth remove <cmd>` | Remove command from allow list |
+| `\auth edit` | Open `~/.arcana/authority.toml` in `$EDITOR` |
 
 ---
 
@@ -425,6 +423,7 @@ These are available inside the interactive TUI session (typed in the composer):
 | `Ctrl+Shift+P` | Freeze & backup all agents |
 | `Ctrl+Shift+M` | Modify last prompt |
 | `Ctrl+/` | Toggle query overlay |
+| `Ctrl+Y` | Toggle terminal text selection mode for native copy/select |
 
 ### 6.2 Composer
 
@@ -432,7 +431,7 @@ These are available inside the interactive TUI session (typed in the composer):
 |-----|--------|
 | `Enter` | Send message |
 | `Alt+Enter` / `Ctrl+J` | Insert newline |
-| `Tab` | Autocomplete slash commands |
+| `Tab` | Autocomplete `\` commands |
 | `↑` (empty composer) | Recall previous message |
 | `Ctrl+G` | Open input in `$EDITOR` |
 
@@ -613,8 +612,8 @@ Arcana is optimized for DeepSeek V4 models:
 
 **Thinking mode**: DeepSeek V4 produces `<think>...</think>` blocks containing chain-of-thought reasoning. Arcana:
 - Streams thinking tokens into a collapsible panel (see TUI design §4.2).
-- Tracks thinking token cost separately in `/usage`.
-- Supports reasoning effort tiers: `off` → `high` → `max` (cycled with `Shift+Tab` or `/reasoning <level>`).
+- Tracks thinking token cost separately in `\usage`.
+- Supports reasoning effort tiers: `off` → `high` → `max`.
 
 **Auto mode** (`--model auto`): A lightweight routing call (using `deepseek-v4-flash` with thinking off) decides which model and thinking level to use for each turn. Simple questions stay on Flash; complex tasks escalate to Pro with high/max thinking.
 
@@ -634,19 +633,19 @@ Arcana works with any OpenAI-compatible API. Provider-specific features:
 After every LLM response, a stats line is appended to the conversation showing per-response usage:
 
 ```
-Expense: 0.0031 ( 1.2K in / 847 out )
+Cost: 0.0031 ( 1.2K in / 847 out )
 Time: 2.4s
 ```
 
 This line appears inline after each agent response (rendered as a dim system message). It shows:
-- **Expense**: Cost in USD for that single response.
+- **Cost**: Provider-estimated cost for that single response. DeepSeek costs use the official USD-per-million-token table, including cache-hit and cache-miss input tokens when reported by the API.
 - **Tokens**: Input tokens consumed / output tokens generated.
 - **Time**: Wall-clock time for the LLM to generate the response.
 
-The `/usage` command shows cumulative session totals:
+The `\usage` command shows cumulative session totals:
 
 ```
-/usage
+\usage
   Input tokens:   8,234  (cached: 6,100 — 74% hit rate)
   Output tokens:  1,456
   Thinking tokens: 3,200
@@ -665,7 +664,7 @@ The status bar shows context window utilization (not cost or time):
 
 ```bash
 $ cd ~/projects/my-parser
-$ arcana
+$ arcana .
 
 # Banner displays, status bar shows model + skills
 # Main agent ready, query agent spawned
@@ -723,7 +722,7 @@ $ arcana resume "pratt parser"
 # Status bar updates: Agents: 3/0 │ Tasks: 0/7
 
 # Sub-agents work in parallel. User can:
-#   - Watch progress in /agents panel
+#   - Watch progress in the agents panel
 #   - Use `?` overlay for questions
 #   - Interrupt with Ctrl+C if needed
 #   - Freeze everything with Ctrl+Shift+P

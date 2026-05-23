@@ -34,6 +34,12 @@ struct App {
     toasts: Vec<Toast>,
     show_banner: bool,
     should_quit: bool,
+    /// True when the user pressed Ctrl+B — ignore remaining tokens.
+    generation_broken: bool,
+    /// When the current LLM stream started (for break-generation timing).
+    stream_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Handle to the currently running LLM stream task (aborted on Ctrl+B).
+    stream_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl App {
@@ -58,6 +64,9 @@ impl App {
             toasts: Vec::new(),
             show_banner: true,
             should_quit: false,
+            generation_broken: false,
+            stream_started_at: None,
+            stream_handle: None,
         }
     }
 
@@ -153,13 +162,17 @@ impl App {
                 self.composer.move_end();
             }
             KeyAction::Up => {
-                if self.composer.is_empty() || self.composer.history_index.is_some() {
+                if self.composer.input.is_empty() {
                     self.composer.recall_previous();
+                } else {
+                    self.composer.move_up();
                 }
             }
             KeyAction::Down => {
-                if self.composer.history_index.is_some() {
+                if self.composer.input.is_empty() {
                     self.composer.recall_next();
+                } else {
+                    self.composer.move_down();
                 }
             }
             KeyAction::PageUp => {
@@ -180,12 +193,13 @@ impl App {
                 }
             }
             KeyAction::BreakGeneration => {
-                // Stop LLM generation immediately
+                // Stop LLM generation immediately — abort the tokio task.
                 if self.viewport.is_streaming {
                     self.viewport.is_streaming = false;
-                    // Finalize whatever we have so far
-                    self.viewport.finalize_response_with_stats(None);
-                    self.viewport.add_separator();
+                    self.generation_broken = true;
+                    if let Some(handle) = self.stream_handle.take() {
+                        handle.abort();
+                    }
                 }
             }
             KeyAction::Freeze => {
@@ -254,15 +268,28 @@ impl App {
                 if self.overlay.composer.is_empty() || self.overlay.composer.history_index.is_some()
                 {
                     self.overlay.composer.recall_previous();
+                } else {
+                    self.overlay.composer.move_up();
                 }
             }
             KeyAction::Down => {
-                if self.overlay.composer.history_index.is_some() {
+                if self.overlay.composer.input.is_empty() {
                     self.overlay.composer.recall_next();
+                } else {
+                    self.overlay.composer.move_down();
                 }
             }
             KeyAction::Interrupt => {
                 self.overlay.composer.clear();
+            }
+            KeyAction::BreakGeneration => {
+                if self.overlay.is_streaming {
+                    self.overlay.is_streaming = false;
+                    self.generation_broken = true;
+                    if let Some(handle) = self.stream_handle.take() {
+                        handle.abort();
+                    }
+                }
             }
             KeyAction::FocusDown => {
                 self.overlay.scroll_down(3);
@@ -425,6 +452,38 @@ pub async fn interactive(
                     let action = classify_key(&key);
                     match app.mode {
                         ViewMode::Main => {
+                            // --- Command selection mode (↑↓ browse, Esc exit) ---
+                            if app.composer.is_in_selection_mode() {
+                                match action {
+                                    KeyAction::Up => {
+                                        app.composer.select_prev();
+                                        continue;
+                                    }
+                                    KeyAction::Down => {
+                                        app.composer.select_next();
+                                        continue;
+                                    }
+                                    KeyAction::Escape => {
+                                        app.composer.exit_selection_mode();
+                                        continue;
+                                    }
+                                    KeyAction::Enter => {
+                                        app.composer.fill_selected_command();
+                                        continue;
+                                    }
+                                    KeyAction::Char(_) | KeyAction::Tab => {
+                                        // Typing or tab exits selection mode,
+                                        // then fall through to normal handling below.
+                                        app.composer.exit_selection_mode();
+                                    }
+                                    _ => {} // other keys fall through normally
+                                }
+                            }
+                            // --- Enter selection mode on Down when input is `\` ---
+                            if action == KeyAction::Down && app.composer.input == "\\" {
+                                app.composer.maybe_enter_selection_mode();
+                                continue;
+                            }
                             // Check if this is an Enter that will send a message
                             if action == KeyAction::Enter && !app.composer.is_empty() {
                                 let input = app.composer.take_input();
@@ -446,6 +505,7 @@ pub async fn interactive(
   \\clear         Clear viewport\n\
   \\status        Show model/token info\n\
   \\usage         Session token/cost stats\n\
+  \\working_dir   Show current working directory\n\
   \\check         System health check\n\
   \\auth list     Show authorized commands\n\
   \\auth add      Add command to allow list\n\
@@ -486,6 +546,14 @@ Hotkeys:\n\
                                         app.viewport.add_error_message(format!(
                                             "Session Usage:\n  Requests: {}\n  Tokens: {} in / {} out\n  Total cost: {:.4}",
                                             app.status.session_requests, in_str, out_str, app.status.session_cost
+                                        ));
+                                    }
+                                    "\\working_dir" => {
+                                        let cwd = std::env::current_dir()
+                                            .map(|p| p.display().to_string())
+                                            .unwrap_or_else(|_| "<unknown>".into());
+                                        app.viewport.add_error_message(format!(
+                                            "Working directory:\n  {cwd}\n\nWorkspace:\n  {cwd}/.arcana/"
                                         ));
                                     }
                                     "\\auth" | "\\auth list" => {
@@ -608,6 +676,8 @@ Hotkeys:\n\
                                         // Send to LLM
                                         app.viewport.add_user_message(input.clone());
                                         app.viewport.is_streaming = true;
+                                        app.generation_broken = false;
+                                        app.stream_started_at = Some(chrono::Utc::now());
                                         app.show_banner = false;
 
                                         let authority_context =
@@ -622,11 +692,15 @@ Hotkeys:\n\
                                             "role": "user", "content": user_content
                                         }));
 
-                                        crate::llm::spawn_stream(
+                                        // Abort any prior stream (defensive) and store the new handle.
+                                        if let Some(old) = app.stream_handle.take() {
+                                            old.abort();
+                                        }
+                                        app.stream_handle = Some(crate::llm::spawn_stream(
                                             &config,
                                             conversation.clone(),
                                             event_tx.clone(),
-                                        );
+                                        ));
                                     }
                                 }
                                 // Add separator after command output
@@ -688,9 +762,18 @@ Hotkeys:\n\
                                     tool_calls: Vec::new(),
                                 });
                                 app.overlay.is_streaming = true;
+                                app.generation_broken = false;
+                                app.stream_started_at = Some(chrono::Utc::now());
 
                                 let msgs = app.overlay.build_messages();
-                                crate::llm::spawn_overlay_stream(&config, msgs, event_tx.clone());
+                                if let Some(old) = app.stream_handle.take() {
+                                    old.abort();
+                                }
+                                app.stream_handle = Some(crate::llm::spawn_overlay_stream(
+                                    &config,
+                                    msgs,
+                                    event_tx.clone(),
+                                ));
                             } else {
                                 app.handle_overlay_key(action);
                             }
@@ -720,6 +803,9 @@ Hotkeys:\n\
                 }
                 AppEvent::Resize(_, _) => {}
                 AppEvent::Token(token) => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     // Thinking tokens are prefixed with \x00THINK:
                     if let Some(think_text) = token.strip_prefix("\x00THINK:") {
                         app.viewport.append_think_token(think_text);
@@ -728,12 +814,42 @@ Hotkeys:\n\
                     }
                 }
                 AppEvent::ThinkStart => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     app.viewport.start_thinking();
                 }
                 AppEvent::ThinkEnd => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     app.viewport.end_thinking();
                 }
                 AppEvent::ResponseComplete(stats) => {
+                    if app.generation_broken {
+                        // User pressed Ctrl+B — show break message with timing.
+                        let elapsed = app
+                            .stream_started_at
+                            .map(|t| {
+                                let dur = chrono::Utc::now() - t;
+                                format!("{:.1}s", dur.num_milliseconds() as f64 / 1000.0)
+                            })
+                            .unwrap_or_else(|| "?".into());
+                        app.viewport.finalize_response_with_stats(None);
+                        app.viewport.messages.push(Message {
+                            role: MessageRole::System,
+                            content: format!("[Break Generation]\nTime: {elapsed}"),
+                            timestamp: chrono::Utc::now(),
+                            thinking: None,
+                            tool_calls: Vec::new(),
+                        });
+                        app.viewport.add_separator();
+                        app.generation_broken = false;
+                        app.stream_started_at = None;
+                        app.stream_handle = None;
+                        continue;
+                    }
+
                     // Store the response in conversation history
                     let response_text = app.viewport.streaming_text.clone();
                     let thinking_text = app
@@ -763,8 +879,10 @@ Hotkeys:\n\
                         msg["reasoning_content"] = serde_json::json!(thinking);
                     }
                     conversation.push(msg);
+                    app.stream_handle = None;
                 }
                 AppEvent::LlmError(err) => {
+                    app.stream_handle = None;
                     app.handle_llm_error(err);
                 }
                 AppEvent::Toast { message, detail } => {
@@ -781,6 +899,9 @@ Hotkeys:\n\
                 }
                 // Overlay (query agent) events
                 AppEvent::OverlayToken(token) => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     if let Some(think_text) = token.strip_prefix("\x00THINK:") {
                         app.overlay.append_think_token(think_text);
                     } else {
@@ -788,15 +909,44 @@ Hotkeys:\n\
                     }
                 }
                 AppEvent::OverlayThinkStart => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     app.overlay.start_thinking();
                 }
                 AppEvent::OverlayThinkEnd => {
+                    if app.generation_broken {
+                        continue;
+                    }
                     app.overlay.end_thinking();
                 }
                 AppEvent::OverlayResponseComplete => {
+                    if app.generation_broken {
+                        let elapsed = app
+                            .stream_started_at
+                            .map(|t| {
+                                let dur = chrono::Utc::now() - t;
+                                format!("{:.1}s", dur.num_milliseconds() as f64 / 1000.0)
+                            })
+                            .unwrap_or_else(|| "?".into());
+                        app.overlay.messages.push(Message {
+                            role: MessageRole::System,
+                            content: format!("[Break Generation]\nTime: {elapsed}"),
+                            timestamp: chrono::Utc::now(),
+                            thinking: None,
+                            tool_calls: Vec::new(),
+                        });
+                        app.generation_broken = false;
+                        app.stream_started_at = None;
+                        app.stream_handle = None;
+                        app.overlay.is_streaming = false;
+                        continue;
+                    }
                     app.overlay.finalize_response();
+                    app.stream_handle = None;
                 }
                 AppEvent::OverlayError(msg) => {
+                    app.stream_handle = None;
                     app.overlay.is_streaming = false;
                     app.overlay.messages.push(Message {
                         role: MessageRole::System,

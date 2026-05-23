@@ -14,6 +14,7 @@ use std::io::{self, stdout};
 /// Terminal wrapper that manages raw mode and alternate screen.
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    mouse_capture: bool,
 }
 
 impl Tui {
@@ -34,7 +35,7 @@ impl Tui {
         );
         let backend = CrosstermBackend::new(out);
         let terminal = Terminal::new(backend)?;
-        Ok(Self { terminal })
+        Ok(Self { terminal, mouse_capture: true })
     }
 
     /// Draw a frame.
@@ -46,10 +47,28 @@ impl Tui {
         Ok(())
     }
 
+    pub fn set_mouse_capture(&mut self, enabled: bool) -> io::Result<()> {
+        if self.mouse_capture == enabled {
+            return Ok(());
+        }
+        if enabled {
+            execute!(self.terminal.backend_mut(), EnableMouseCapture)?;
+        } else {
+            execute!(self.terminal.backend_mut(), DisableMouseCapture)?;
+        }
+        self.mouse_capture = enabled;
+        Ok(())
+    }
+
+    pub fn mouse_capture(&self) -> bool {
+        self.mouse_capture
+    }
+
     /// Suspend the TUI for running an external program (editor).
     pub fn suspend(&mut self) -> io::Result<()> {
         let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
         execute!(self.terminal.backend_mut(), DisableMouseCapture, DisableBracketedPaste, LeaveAlternateScreen)?;
+        self.mouse_capture = false;
         terminal::disable_raw_mode()?;
         Ok(())
     }
@@ -58,6 +77,7 @@ impl Tui {
     pub fn resume(&mut self) -> io::Result<()> {
         terminal::enable_raw_mode()?;
         execute!(self.terminal.backend_mut(), EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
+        self.mouse_capture = true;
         let _ = execute!(
             self.terminal.backend_mut(),
             PushKeyboardEnhancementFlags(
@@ -75,6 +95,7 @@ impl Tui {
         let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
         terminal::disable_raw_mode()?;
         execute!(self.terminal.backend_mut(), DisableMouseCapture, DisableBracketedPaste, LeaveAlternateScreen)?;
+        self.mouse_capture = false;
         Ok(())
     }
 }
