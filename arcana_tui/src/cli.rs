@@ -4,9 +4,6 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "arcana", about = "Arcana Agent — Memory · Skills · Authority")]
 pub struct Cli {
-    /// Project path to open
-    pub project: Option<PathBuf>,
-
     /// Single-shot query (non-interactive)
     #[arg(short, long)]
     pub query: Option<String>,
@@ -32,6 +29,9 @@ pub struct Cli {
     /// (requires extra warning confirmation).
     #[arg(long)]
     pub factory: bool,
+
+    /// Project root directory (defaults to current directory with confirmation)
+    pub project: Option<PathBuf>,
 
     #[command(subcommand)]
     pub command: Option<Command>,
