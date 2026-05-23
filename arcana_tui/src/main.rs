@@ -583,6 +583,15 @@ mod auth_cmd {
                 save(&config)?;
                 println!("  ✓ Authority config reset to defaults.");
             }
+            Some(AuthAction::Instruction) => {
+                let path = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".arcana/INSTRUCTION.md");
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => println!("{}", content),
+                    Err(_) => println!("  No instruction file found at {}", path.display()),
+                }
+            }
         }
         Ok(())
     }
