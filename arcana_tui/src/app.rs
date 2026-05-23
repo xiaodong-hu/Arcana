@@ -1,5 +1,9 @@
 use ratatui::prelude::*;
 use ratatui::layout::{Constraint, Direction, Layout};
+use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
 
 use crate::banner;
 use crate::cli::ResumeArgs;
@@ -312,7 +316,7 @@ pub async fn interactive(
 
     // Conversation history for LLM context
     let mut conversation: Vec<serde_json::Value> = vec![
-        serde_json::json!({"role": "system", "content": "You are a helpful assistant."})
+        serde_json::json!({"role": "system", "content": system_prompt_with_authority()})
     ];
 
     loop {
@@ -667,13 +671,20 @@ pub async fn single_shot(
         _ => return Err(format!("Unsupported provider: {}", provider_name).into()),
     };
 
+    let authority_context = authority_context_for_query(query);
+    let user_content = if authority_context.is_empty() {
+        query.to_string()
+    } else {
+        format!("{authority_context}\n\nUser query:\n{query}")
+    };
+
     // Build request body
     let thinking_config = &config.agents.main.thinking;
     let mut body = serde_json::json!({
         "model": model_name,
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": query}
+            {"role": "system", "content": system_prompt_with_authority()},
+            {"role": "user", "content": user_content}
         ],
         "stream": false
     });
@@ -719,6 +730,224 @@ pub async fn single_shot(
     }
 
     Ok(())
+}
+
+fn system_prompt_with_authority() -> String {
+    let base = "You are a helpful assistant.";
+    match fs::read_to_string(".arcana/authorized_prompt.md") {
+        Ok(prompt) => format!("{}\n\n{}", prompt.trim_end(), base),
+        Err(_) => base.to_string(),
+    }
+}
+
+fn authority_context_for_query(query: &str) -> String {
+    let urls = extract_urls(query);
+    if urls.is_empty() {
+        return String::new();
+    }
+
+    let socket_path = Path::new(".arcana/authority.sock");
+    if !socket_path.exists() {
+        return String::new();
+    }
+
+    let mut sections = Vec::new();
+    for url in urls {
+        match authority_fetch_url(socket_path, &url) {
+            Ok(Some(section)) => sections.push(section),
+            Ok(None) => {}
+            Err(e) => sections.push(format!("Authority fetch failed for {url}: {e}")),
+        }
+    }
+
+    if sections.is_empty() {
+        String::new()
+    } else {
+        format!("Authority-fetched context:\n\n{}", sections.join("\n\n"))
+    }
+}
+
+fn authority_fetch_url(socket_path: &Path, url: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let mut stream = UnixStream::connect(socket_path)?;
+    let req = serde_json::json!({"op": "fetch", "url": url, "tag": null});
+    writeln!(stream, "{}", req)?;
+    stream.flush()?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let resp: serde_json::Value = serde_json::from_str(line.trim())?;
+
+    if resp["status"] == "denied" {
+        let reason = resp["reason"].as_str().unwrap_or("unknown reason");
+        return Ok(Some(format!("Source: {url}\nDenied by authority: {reason}")));
+    }
+
+    if resp["status"] != "fetched" {
+        return Ok(None);
+    }
+
+    let Some(path) = resp["path"].as_str() else {
+        return Ok(None);
+    };
+
+    let bytes = fs::read(PathBuf::from(path))?;
+    let text = if looks_like_pdf(&bytes) {
+        format!("[PDF fetched: {} bytes]", bytes.len())
+    } else {
+        html_to_text(&String::from_utf8_lossy(&bytes))
+    };
+
+    Ok(Some(format!("Source: {url}\n{}", truncate_chars(&text, 12_000))))
+}
+
+fn extract_urls(text: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    for token in text.split_whitespace() {
+        let url = token.trim_matches(|c: char| matches!(c, '"' | '\'' | '<' | '>' | ')' | '(' | ',' | '.'));
+        if (url.starts_with("https://") || url.starts_with("http://")) && !urls.iter().any(|u| u == url) {
+            urls.push(url.to_string());
+        }
+    }
+    urls
+}
+
+fn looks_like_pdf(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF")
+}
+
+fn html_to_text(input: &str) -> String {
+    let mut input = input.to_string();
+    let mut prefix = extract_html_metadata(&input);
+    for (start, end) in [("<script", "</script>"), ("<style", "</style>"), ("<svg", "</svg>")] {
+        input = remove_html_block(&input, start, end);
+    }
+
+    let mut out = String::with_capacity(input.len().min(16_000));
+    let mut in_tag = false;
+    let mut last_space = false;
+    for ch in input.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                if !last_space {
+                    out.push(' ');
+                    last_space = true;
+                }
+            }
+            _ if in_tag => {}
+            _ if ch.is_whitespace() => {
+                if !last_space {
+                    out.push(' ');
+                    last_space = true;
+                }
+            }
+            _ => {
+                out.push(ch);
+                last_space = false;
+            }
+        }
+    }
+    let body = decode_basic_entities(out.trim());
+    if prefix.is_empty() {
+        body
+    } else {
+        prefix.push_str("\n");
+        prefix.push_str(&body);
+        prefix
+    }
+}
+
+fn decode_basic_entities(text: &str) -> String {
+    text.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+}
+
+fn extract_html_metadata(input: &str) -> String {
+    let mut parts = Vec::new();
+    if let Some(title) = extract_between_case_insensitive(input, "<title", "</title>") {
+        let title = title.split_once('>').map(|(_, value)| value).unwrap_or(&title);
+        let title = decode_basic_entities(title.trim());
+        if !title.is_empty() {
+            parts.push(format!("Title: {title}"));
+        }
+    }
+
+    let lower = input.to_lowercase();
+    let mut search_from = 0;
+    while let Some(idx) = lower[search_from..].find("<meta") {
+        let start = search_from + idx;
+        let Some(end_rel) = lower[start..].find('>') else { break };
+        let end = start + end_rel + 1;
+        let tag = &input[start..end];
+        let tag_lower = &lower[start..end];
+        if (tag_lower.contains("name=\"description\"")
+            || tag_lower.contains("name='description'")
+            || tag_lower.contains("property=\"og:title\"")
+            || tag_lower.contains("property='og:title'")
+            || tag_lower.contains("property=\"og:description\"")
+            || tag_lower.contains("property='og:description'"))
+            && let Some(content) = extract_attr(tag, "content")
+        {
+            let content = decode_basic_entities(content.trim());
+            if !content.is_empty() {
+                parts.push(content);
+            }
+        }
+        search_from = end;
+    }
+
+    parts.join("\n")
+}
+
+fn extract_between_case_insensitive(input: &str, start_pat: &str, end_pat: &str) -> Option<String> {
+    let lower = input.to_lowercase();
+    let start = lower.find(start_pat)?;
+    let end_rel = lower[start..].find(end_pat)?;
+    Some(input[start..start + end_rel].to_string())
+}
+
+fn extract_attr(tag: &str, attr: &str) -> Option<String> {
+    let lower = tag.to_lowercase();
+    let needle = format!("{attr}=");
+    let idx = lower.find(&needle)?;
+    let rest = &tag[idx + needle.len()..];
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let value_start = quote.len_utf8();
+    let value_end = rest[value_start..].find(quote)?;
+    Some(rest[value_start..value_start + value_end].to_string())
+}
+
+fn remove_html_block(input: &str, start_pat: &str, end_pat: &str) -> String {
+    let mut out = input.to_string();
+    loop {
+        let lower = out.to_lowercase();
+        let Some(start) = lower.find(start_pat) else { break };
+        let Some(end_rel) = lower[start..].find(end_pat) else {
+            out.replace_range(start.., " ");
+            break;
+        };
+        let end = start + end_rel + end_pat.len();
+        out.replace_range(start..end, " ");
+    }
+    out
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max_chars).collect();
+    out.push_str("\n[truncated]");
+    out
 }
 
 /// Resume a previous session.
