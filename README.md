@@ -368,24 +368,25 @@ Type `\` then press `↓` to browse all commands with arrow keys. Press `Esc` to
 | Command | Action |
 |---------|--------|
 | `\quit` | Exit session |
+| `\help` | Show all commands and hotkeys |
 | `\clear` | Clear viewport |
 | `\status` | Show model/token info |
 | `\usage` | Session token/cost statistics |
 | `\working_dir` | Show current working directory |
 | `\check` | System health check |
-| `\auth list` | Show authorized commands |
+| `\auth show` | Show authority config |
 | `\auth add <cmd>` | Add to allow list |
 | `\auth remove <cmd>` | Remove from allow list |
 | `\auth edit` | Open authority.toml in `$EDITOR` |
-| `\help` | Show all commands and hotkeys |
-| `\auth edit` | Open authority.toml in `$EDITOR` |
-| `\help` | Show all commands and hotkeys |
+| `\config show` | Show ~/.arcana/config.toml |
+| `\config edit` | Open config.toml in `$EDITOR` |
 
 ---
 
 ## Configuration
 
-Config lives at `~/.arcana/config.toml`. Created automatically on first launch.
+Config lives at `~/.arcana/config.toml`. Arcana prompts to create the global
+workspace on first launch if it does not exist. Run `arcana onboard` for guided setup.
 
 ```bash
 arcana config show    # Print current config
