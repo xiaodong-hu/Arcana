@@ -74,7 +74,7 @@ The authority program **auto-generates** a project-level file `.arcana/authorize
 
 #### Usage by TUI
 
-The TUI (`arcana_tui`) reads `.arcana/authorized_prompt.md` and **mandatorily prepends** it to the system message at the start of each session. This ensures the LLM always knows:
+The TUI (`arcana_tui`) reads `.arcana/authorized_prompt.md` and **mandatorily prepends** it to the system message at the start of each session. When the model emits AAS JSON request lines, Arcana-Agent relays them to `.arcana/authority.sock`, appends the JSON responses back into the conversation, and lets the model continue. This ensures the LLM always knows:
 - What tools are available and how to invoke them.
 - What permissions it has (so it doesn't attempt denied operations).
 - That all operations go through the authority socket (not direct filesystem access).

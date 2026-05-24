@@ -135,7 +135,7 @@ The authority program reads the human-maintained authority instruction and auto-
 - the loaded project-level `.arcana/authority.toml` when present,
 - the merged machine-readable authority snapshot.
 
-Agents interact with authority by sending JSONL requests to the session authority socket:
+Agents interact with authority by emitting JSONL requests. Arcana-Agent relays those JSON lines to the session authority socket and returns the JSON responses to the model:
 
 ```bash
 # View the instruction text:

@@ -8,7 +8,7 @@ use crate::authority::Authority;
 const DEFAULT_INSTRUCTION: &str = r#"# Interface for `Arcana Authority System (AAS)`
 `Arcana Authority System` is used for every filesystem mutation, command execution, network request, and runtime tool change. Ask AAS when permission is unclear.
 
-Communicate with the authority process over the session IPC channel by sending one JSON object per line. Each request returns one JSON object on one line.
+Communicate with the authority process through the Arcana-Agent AAS bridge by emitting one JSON object per line. Arcana-Agent relays each request to the session IPC channel and returns one JSON object per line back to you.
 
 ## Discovery
 ```json
@@ -36,6 +36,8 @@ Communicate with the authority process over the session IPC channel by sending o
 `read` returns base64 file content. `write` requires base64 file content. `fetch` returns the project cache path and byte length; request `read` on that cache path if page content is needed. `exec_shell` is for multi-line executable command strings and always asks the human to approve, edit, or abort before execution.
 
 Registration requests write approved entries to the project-level authority policy. Use registration only when an operation is not already allowed or denied by the supplied authority policies.
+
+When you need AAS to do work, output only the JSON request lines first. Do not wrap them in markdown. After Arcana-Agent returns AAS responses, continue the user task from those results.
 
 ## Abort Responses
 If AAS returns `{"status":"aborted","error_type":"...","message":"..."}`, immediately report that error to the user and stop generation. Do not retry the same operation unless the user explicitly asks.

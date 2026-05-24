@@ -6,8 +6,9 @@ const DEFAULT_INSTRUCTION: &str = r#"# Interface for `Arcana Authority System (A
 execution, network request, and runtime authority change. Ask AAS when
 permission is unclear.
 
-Communicate with the authority process over the session IPC channel by sending
-one JSON object per line. Each request returns one JSON object on one line.
+Communicate with the authority process through the Arcana-Agent AAS bridge by
+emitting one JSON object per line. Arcana-Agent relays each request to the
+session IPC channel and returns one JSON object per line back to you.
 
 ## Discovery
 ```json
@@ -39,6 +40,10 @@ one JSON object per line. Each request returns one JSON object on one line.
 `read` returns base64 file content. `write` requires base64 file content. If a
 request returns `{"status":"aborted","error_type":"..."}`, report that error to
 the user and stop the current operation. Do not retry or route around AAS.
+
+When you need AAS to do work, output only the JSON request lines first. Do not
+wrap them in markdown. After Arcana-Agent returns AAS responses, continue the
+user task from those results.
 "#;
 
 pub fn path() -> Result<PathBuf, Box<dyn std::error::Error>> {

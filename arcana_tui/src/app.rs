@@ -1029,20 +1029,111 @@ pub async fn single_shot(
 
     // Build request body
     let thinking_config = &config.agents.main.thinking;
-    let mut body = serde_json::json!({
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt_with_authority()},
-            {"role": "user", "content": user_content}
-        ],
-        "stream": false
-    });
-    if thinking_config.enabled {
-        body["thinking"] = serde_json::json!({"type": "enabled"});
-        body["reasoning_effort"] = serde_json::json!(thinking_config.reasoning_effort);
+    let client = reqwest::Client::new();
+    let mut messages = vec![
+        serde_json::json!({"role": "system", "content": system_prompt_with_authority()}),
+        serde_json::json!({"role": "user", "content": user_content}),
+    ];
+    let mut last_usage = None;
+
+    for turn in 0..6 {
+        let data = send_single_shot_chat(
+            &client,
+            &base_url,
+            &api_key,
+            model_name,
+            &messages,
+            thinking_config.enabled,
+            &thinking_config.reasoning_effort,
+        )
+        .await?;
+
+        if let Some(usage) = data.get("usage") {
+            last_usage = Some(usage.clone());
+        }
+
+        if let Some(reasoning) = data["choices"][0]["message"]["reasoning_content"].as_str() {
+            if !reasoning.is_empty() {
+                println!("\x1b[2m<thinking>\n{}\n</thinking>\x1b[0m\n", reasoning);
+            }
+        }
+
+        let content = data["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let requests = extract_authority_json_requests(&content);
+        if requests.is_empty() {
+            println!("{}", content);
+            break;
+        }
+
+        messages.push(serde_json::json!({"role": "assistant", "content": content}));
+
+        let socket_path = Path::new(".arcana/authority.sock");
+        let mut responses = Vec::new();
+        for request in requests {
+            let response = if socket_path.exists() {
+                match authority_request(socket_path, request.clone()) {
+                    Ok(response) => response,
+                    Err(e) => serde_json::json!({
+                        "status": "denied",
+                        "reason": format!("AAS bridge failed: {e}")
+                    }),
+                }
+            } else {
+                serde_json::json!({
+                    "status": "denied",
+                    "reason": "AAS bridge failed: .arcana/authority.sock not found"
+                })
+            };
+            println!("[arcana] AAS {} -> {}", request, response);
+            responses.push(response);
+        }
+
+        let response_text = responses
+            .into_iter()
+            .map(|response| response.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": format!("AAS returned these JSON responses, one per line:\n{response_text}\n\nContinue the task using these results. If a response is denied or aborted, report it and stop that operation.")
+        }));
+
+        if turn == 5 {
+            println!("AAS bridge stopped after too many authority-request turns.");
+        }
     }
 
-    let client = reqwest::Client::new();
+    if let Some(usage) = last_usage {
+        let input = usage["prompt_tokens"].as_u64().unwrap_or(0);
+        let output = usage["completion_tokens"].as_u64().unwrap_or(0);
+        println!("\n\x1b[2m[tokens: {} in / {} out]\x1b[0m", input, output);
+    }
+
+    Ok(())
+}
+
+async fn send_single_shot_chat(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    model_name: &str,
+    messages: &[serde_json::Value],
+    thinking_enabled: bool,
+    reasoning_effort: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut body = serde_json::json!({
+        "model": model_name,
+        "messages": messages,
+        "stream": false
+    });
+    if thinking_enabled {
+        body["thinking"] = serde_json::json!({"type": "enabled"});
+        body["reasoning_effort"] = serde_json::json!(reasoning_effort);
+    }
+
     let resp = client
         .post(format!("{}/chat/completions", base_url))
         .header("Content-Type", "application/json")
@@ -1057,32 +1148,11 @@ pub async fn single_shot(
         return Err(format!("API error ({}): {}", status, text).into());
     }
 
-    let data: serde_json::Value = resp.json().await?;
-
-    // Print reasoning if present
-    if let Some(reasoning) = data["choices"][0]["message"]["reasoning_content"].as_str() {
-        if !reasoning.is_empty() {
-            println!("\x1b[2m<thinking>\n{}\n</thinking>\x1b[0m\n", reasoning);
-        }
-    }
-
-    // Print the final answer
-    if let Some(content) = data["choices"][0]["message"]["content"].as_str() {
-        println!("{}", content);
-    }
-
-    // Print usage
-    if let Some(usage) = data.get("usage") {
-        let input = usage["prompt_tokens"].as_u64().unwrap_or(0);
-        let output = usage["completion_tokens"].as_u64().unwrap_or(0);
-        println!("\n\x1b[2m[tokens: {} in / {} out]\x1b[0m", input, output);
-    }
-
-    Ok(())
+    Ok(resp.json().await?)
 }
 
 fn system_prompt_with_authority() -> String {
-    let base = "You are a helpful assistant.";
+    let base = "You are a helpful assistant.\n\nArcana-Agent AAS bridge: you cannot open the authority socket yourself. To call the Arcana Authority System, output one JSON object per line using the documented AAS API, with no markdown wrapper. Arcana-Agent will relay those JSON lines to AAS, return the JSON responses to you, and then you must continue from the returned results. If AAS returns an aborted or denied response, report it and stop that operation.";
     match fs::read_to_string(".arcana/authorized_prompt.md") {
         Ok(prompt) => format!("{}\n\n{}", prompt.trim_end(), base),
         Err(_) => base.to_string(),
@@ -1494,6 +1564,66 @@ fn authority_request(
     let mut line = String::new();
     reader.read_line(&mut line)?;
     Ok(serde_json::from_str(line.trim())?)
+}
+
+fn extract_authority_json_requests(content: &str) -> Vec<serde_json::Value> {
+    let mut requests = Vec::new();
+
+    let mut candidate = String::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for ch in content.chars() {
+        if depth == 0 {
+            if ch != '{' {
+                continue;
+            }
+            candidate.clear();
+        }
+
+        if in_string && ch == '\n' {
+            candidate.push_str("\\n");
+        } else {
+            candidate.push(ch);
+        }
+
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_string && ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&candidate) {
+                        if value.get("op").and_then(|op| op.as_str()).is_some() {
+                            requests.push(value);
+                        }
+                    }
+                    candidate.clear();
+                    in_string = false;
+                    escaped = false;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    requests
 }
 
 fn extract_urls(text: &str) -> Vec<String> {
