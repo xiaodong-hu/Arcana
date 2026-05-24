@@ -165,16 +165,16 @@ impl App {
                 self.composer.move_end();
             }
             KeyAction::Up => {
-                if self.composer.input.is_empty() {
+                if self.composer.input.is_empty() || self.composer.history_index.is_some() {
                     self.composer.recall_previous();
                 } else {
                     self.composer.move_up();
                 }
             }
             KeyAction::Down => {
-                if self.composer.input.is_empty() {
+                if self.composer.history_index.is_some() {
                     self.composer.recall_next();
-                } else {
+                } else if !self.composer.input.is_empty() {
                     self.composer.move_down();
                 }
             }
@@ -276,9 +276,9 @@ impl App {
                 }
             }
             KeyAction::Down => {
-                if self.overlay.composer.input.is_empty() {
+                if self.overlay.composer.history_index.is_some() {
                     self.overlay.composer.recall_next();
-                } else {
+                } else if !self.overlay.composer.input.is_empty() {
                     self.overlay.composer.move_down();
                 }
             }
@@ -618,8 +618,7 @@ Hotkeys:\n\
   Ctrl+Enter     New line in prompt\n\
   Home/End       Start/end of current line\n\
   Ctrl+b         Stop LLM generation\n\
-  Ctrl+c         Clear prompt\n\
-  \\quit          Exit session"
+  Ctrl+c         Clear prompt"
                                                 .into(),
                                         );
                                     }

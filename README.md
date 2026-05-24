@@ -380,6 +380,7 @@ Type `\` then press `↓` to browse all commands with arrow keys. Press `Esc` to
 | Command | Action |
 |---------|--------|
 | `\quit` | Exit session |
+| `\help` | Show all commands and hotkeys |
 | `\clear` | Clear viewport |
 | `\status` | Show model/token info |
 | `\usage` | Session token/cost statistics |
@@ -399,7 +400,8 @@ Type `\` then press `↓` to browse all commands with arrow keys. Press `Esc` to
 
 ## Configuration
 
-Config lives at `~/.arcana/config.toml`. Created automatically on first launch.
+Config lives at `~/.arcana/config.toml`. Arcana prompts to create the global
+workspace on first launch if it does not exist. Run `arcana onboard` for guided setup.
 
 ```bash
 arcana config show    # Print current config

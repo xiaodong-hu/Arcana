@@ -413,20 +413,24 @@ arcana --reset [<project>]      # Remove project workspace (confirmation require
 arcana --reset --factory        # Remove ~/.arcana/ entirely (extra warning + confirmation)
 ```
 
-Note: `~/.arcana/` is automatically created on every launch if it doesn't exist.
+Note: Arcana prompts to create `~/.arcana/` on every launch if it does not already exist.
+Run `arcana onboard` for a guided first-time setup.
 
 ---
 
 ## 5. In-Session TUI Commands
 
-These are available inside the interactive TUI session (typed in the composer):
+These are available inside the interactive TUI session (typed in the composer).
+Type `\` then press `↓` to browse all commands with arrow keys; press `Esc` to exit selection.
 
 | Command | Description |
 |---------|-------------|
 | `\help` | Show all available commands |
+| `\quit` | Exit session |
 | `\clear` | Clear viewport |
 | `\status` | Show model/token info |
 | `\usage` | Session token/cost statistics |
+| `\working_dir` | Show current working directory |
 | `\check` | System health check |
 | `\config list` | Show `~/.arcana/config.toml` |
 | `\config edit` | Open `~/.arcana/config.toml` in `$EDITOR` |
