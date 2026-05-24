@@ -4,7 +4,6 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::banner;
 use crate::cli::ResumeArgs;
@@ -1099,29 +1098,17 @@ async fn authority_context_for_query(query: &str, _config: &Config) -> String {
     let socket_path = Path::new(".arcana/authority.sock");
     let mut sections = Vec::new();
     for url in urls {
-        // Try authority socket first; fall back to direct curl on any failure.
-        let result = if socket_path.exists() {
-            authority_url_context(socket_path, &url).await
-        } else {
-            Err("no authority socket".into())
-        };
+        if !socket_path.exists() {
+            sections.push(format!(
+                "Source: {url}\nFetch skipped: authority socket not found"
+            ));
+            continue;
+        }
 
-        match result {
+        match authority_url_context(socket_path, &url).await {
             Ok(Some(section)) => sections.push(section),
             Ok(None) => {}
-            Err(auth_err) => {
-                // Authority failed — fall back to direct curl.
-                match direct_fetch_url(&url) {
-                    Ok(text) => {
-                        sections.push(format!("Source: {url}\n\n{text}"));
-                    }
-                    Err(curl_err) => {
-                        sections.push(format!(
-                            "Source: {url}\nFetch failed (authority: {auth_err}, direct: {curl_err})"
-                        ));
-                    }
-                }
-            }
+            Err(auth_err) => sections.push(format!("Source: {url}\nFetch failed: {auth_err}")),
         }
     }
 
@@ -1165,59 +1152,6 @@ async fn authority_url_context(
     };
 
     Ok(Some(format!("Source: {url}\n\n{text}")))
-}
-
-/// Direct curl fetch — used when the authority daemon is not reachable.
-/// Caches pages under `.arcana/web_cache/` the same way the authority daemon does.
-fn direct_fetch_url(url: &str) -> Result<String, Box<dyn std::error::Error>> {
-    // Ensure cache directory exists
-    let cache_dir = PathBuf::from(".arcana/web_cache/pages");
-    fs::create_dir_all(&cache_dir)?;
-
-    // Simple deterministic hash of URL for cache filename (djb2)
-    let url_hash = {
-        let mut h: u64 = 5381;
-        for b in url.bytes() {
-            h = h.wrapping_mul(33).wrapping_add(b as u64);
-        }
-        format!("{:016x}", h)
-    };
-    let cache_file = cache_dir.join(&url_hash);
-
-    // Fetch if not cached
-    if !cache_file.exists() {
-        let status = Command::new("curl")
-            .args([
-                "-sL", "--max-time", "30",
-                "-H", "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "-H", "Accept-Language: en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
-                "-o",
-            ])
-            .arg(&cache_file)
-            .arg(url)
-            .status()?;
-
-        if !status.success() {
-            let _ = fs::remove_file(&cache_file);
-            return Err(format!("curl exited with {}", status).into());
-        }
-
-        // Append to index
-        let index_path = PathBuf::from(".arcana/web_cache/index.jsonl");
-        let mut idx = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&index_path)?;
-        writeln!(idx, "{{\"url\":\"{}\",\"file\":\"{}\"}}", url, url_hash)?;
-    }
-
-    let bytes = fs::read(&cache_file)?;
-    if looks_like_pdf(&bytes) {
-        Ok(format!("[PDF fetched: {} bytes]", bytes.len()))
-    } else {
-        Ok(clean_html_for_llm(&String::from_utf8_lossy(&bytes)))
-    }
 }
 
 /// Clean raw HTML before throwing it into the LLM conversation.

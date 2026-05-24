@@ -20,8 +20,24 @@ pub enum Request {
     Fetch { url: String, tag: Option<String> },
     #[serde(rename = "exec")]
     Exec { cmd: String, args: Vec<String> },
+    #[serde(rename = "exec_shell")]
+    ExecShell { command: String },
     #[serde(rename = "register_tool")]
-    RegisterTool { name: String, path: String, args: Vec<String>, description: String },
+    RegisterTool {
+        name: String,
+        path: String,
+        args: Vec<String>,
+        description: String,
+    },
+    #[serde(rename = "register_command")]
+    RegisterCommand { pattern: String },
+    #[serde(rename = "register_web")]
+    RegisterWeb { domain: String },
+    #[serde(rename = "register_filesystem")]
+    RegisterFilesystem {
+        access: FilesystemAccess,
+        path: String,
+    },
     #[serde(rename = "instruction")]
     Instruction,
     #[serde(rename = "list_authority")]
@@ -44,11 +60,22 @@ pub enum Response {
     #[serde(rename = "fetched")]
     Fetched { path: String, bytes: u64 },
     #[serde(rename = "exec_result")]
-    ExecResult { stdout: String, stderr: String, code: i32 },
+    ExecResult {
+        stdout: String,
+        stderr: String,
+        code: i32,
+    },
     #[serde(rename = "instruction")]
     Instruction { content: String },
+    #[serde(rename = "prompt")]
+    Prompt { content: String },
     #[serde(rename = "authority")]
     Authority { snapshot: AuthoritySnapshot },
+    #[serde(rename = "aborted")]
+    Aborted {
+        error_type: AuthorityErrorType,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +86,24 @@ pub enum AccessLevel {
     Write,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilesystemAccess {
+    Writable,
+    Readonly,
+    Deny,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthorityErrorType {
+    ToolCallAbortError,
+    FileAccessAbortError,
+    WebAccessAbortError,
+    ToolRegistrationAbortError,
+    FileAccessRegistrationAbortError,
+    WebAccessRegistrationAbortError,
+}
+
 // === Access Rules ===
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,15 +111,6 @@ pub enum RuleVerdict {
     Allow,
     Deny,
     Prompt,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccessConfig {
-    pub rules: AccessRules,
-    #[serde(default)]
-    pub web: WebConfig,
-    #[serde(default)]
-    pub tools: ToolsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,7 +137,11 @@ pub struct WebConfig {
 
 impl Default for WebConfig {
     fn default() -> Self {
-        Self { default: "prompt".into(), allow_domains: vec![], deny_domains: vec![] }
+        Self {
+            default: "prompt".into(),
+            allow_domains: vec![],
+            deny_domains: vec![],
+        }
     }
 }
 
@@ -131,8 +171,12 @@ impl Default for ToolsConfig {
     }
 }
 
-fn default_prompt() -> String { "prompt".into() }
-fn default_true() -> bool { true }
+fn default_prompt() -> String {
+    "prompt".into()
+}
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthoritySnapshot {
@@ -140,6 +184,13 @@ pub struct AuthoritySnapshot {
     pub network: WebConfig,
     pub commands: ToolsConfig,
     pub runtime_tools: Vec<String>,
+    pub configs: AuthorityConfigSources,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorityConfigSources {
+    pub system_toml: Option<String>,
+    pub project_toml: Option<String>,
 }
 
 // === Action Record ===

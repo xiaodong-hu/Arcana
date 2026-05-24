@@ -128,7 +128,12 @@ Runtime management: `\auth list|add|remove|edit`
 
 #### LLM Authority Instruction
 
-The authority program reads the human-maintained authority instruction and auto-generates `.arcana/authorized_prompt.md` as mandatory first-line LLM context. The instruction stays API-only; current filesystem, command, and network policy is exposed separately as a structured authority snapshot.
+The authority program reads the human-maintained authority instruction and auto-generates `.arcana/authorized_prompt.md` as mandatory first-line LLM context. The generated prompt includes:
+
+- the API-only `~/.arcana/INSTRUCTION.md`,
+- the loaded system-wide authority TOML,
+- the loaded project-level `.arcana/authority.toml` when present,
+- the merged machine-readable authority snapshot.
 
 Agents interact with authority by sending JSONL requests to the session authority socket:
 
@@ -142,9 +147,13 @@ arcana auth instruction
 {"op":"list_authority"}
 {"op":"query","path":"README.md"}
 {"op":"fetch","url":"https://example.com","tag":null}
+{"op":"exec_shell","command":"cargo test\ncargo clippy"}
+{"op":"register_command","pattern":"cargo test"}
+{"op":"register_web","domain":"example.com"}
+{"op":"register_filesystem","access":"writable","path":"src/**"}
 ```
 
-The generated prompt is refreshed on server startup and after runtime authority changes.
+Unlisted operations can be approved, edited, or aborted by the human. Abort responses are typed, for example `ToolCallAbortError`, `WebAccessAbortError`, and `FileAccessRegistrationAbortError`; the agent must report them and stop that operation. Approved registrations are persisted to project-level `.arcana/authority.toml`, creating it if needed. The generated prompt is refreshed on server startup and after runtime authority changes.
 
 ---
 
@@ -374,10 +383,9 @@ Type `\` then press `↓` to browse all commands with arrow keys. Press `Esc` to
 | `\working_dir` | Show current working directory |
 | `\check` | System health check |
 | `\auth list` | Show authorized commands |
+| `\auth instruction` | Show `~/.arcana/INSTRUCTION.md` |
 | `\auth add <cmd>` | Add to allow list |
 | `\auth remove <cmd>` | Remove from allow list |
-| `\auth edit` | Open authority.toml in `$EDITOR` |
-| `\help` | Show all commands and hotkeys |
 | `\auth edit` | Open authority.toml in `$EDITOR` |
 | `\help` | Show all commands and hotkeys |
 

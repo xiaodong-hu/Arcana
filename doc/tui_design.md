@@ -234,20 +234,20 @@ A multi-line text input area at the bottom of the screen.
 
 **History behavior**: `Up` only enters history mode from an empty prompt. Any edit action (typing, backspace, cursor movement) immediately exits history mode.
 
-### 5.3 Slash Commands
+### 5.3 System Commands
 
-Typing `/` activates a floating autocomplete panel above the composer:
+Typing `\` activates a floating autocomplete panel above the composer:
 
 ```
 ┌─────────────────────────────────┐
-│ /model     Change active model  │
-│ /skills    List active skills   │
-│ /agents    Show sub-agent tree  │
-│ /tasks     Show task progress   │
-│ /freeze    Freeze all agents    │
-│ /resume    Resume session       │
-│ /memory    Memory commands      │
-│ /help      Show all commands    │
+│ \model     Change active model  │
+│ \skills    List active skills   │
+│ \agents    Show sub-agent tree  │
+│ \tasks     Show task progress   │
+│ \freeze    Freeze all agents    │
+│ \resume    Resume session       │
+│ \memory    Memory commands      │
+│ \help      Show all commands    │
 └─────────────────────────────────┘
 ```
 

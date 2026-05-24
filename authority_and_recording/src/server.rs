@@ -6,10 +6,10 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
-use crate::authority::Authority;
+use crate::authority::{Approval, Authority};
 use crate::prompt;
 use crate::record::Record;
-use crate::types::{AccessLevel, Request, Response, RuleVerdict};
+use crate::types::{AccessLevel, AuthorityErrorType, Request, Response, RuleVerdict};
 
 pub struct Server {
     socket_path: PathBuf,
@@ -102,12 +102,18 @@ impl Server {
             Request::Query { path } => Ok(self.handle_query(&path)),
             Request::Fetch { url, tag: _ } => self.handle_fetch(&url),
             Request::Exec { cmd, args } => self.handle_exec(&cmd, &args),
+            Request::ExecShell { command } => self.handle_exec_shell(&command),
             Request::RegisterTool {
                 name,
                 path,
                 args,
                 description,
             } => self.handle_register_tool(&name, &path, &args, &description),
+            Request::RegisterCommand { pattern } => self.handle_register_command(&pattern),
+            Request::RegisterWeb { domain } => self.handle_register_web(&domain),
+            Request::RegisterFilesystem { access, path } => {
+                self.handle_register_filesystem(access, &path)
+            }
             Request::Instruction => self.handle_instruction(),
             Request::ListAuthority => Ok(Response::Authority {
                 snapshot: self.authority.snapshot(),
@@ -135,10 +141,8 @@ impl Server {
     }
 
     fn handle_write(&mut self, path: &str, content_b64: &str) -> io::Result<Response> {
-        if !self.authorize_write(path) {
-            return Ok(Response::Denied {
-                reason: "write access denied".into(),
-            });
+        if let Err(resp) = self.authorize_write(path) {
+            return Ok(resp);
         }
         let content = base64_decode(content_b64)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad base64"))?;
@@ -155,10 +159,8 @@ impl Server {
     }
 
     fn handle_delete(&mut self, path: &str) -> io::Result<Response> {
-        if !self.authorize_write(path) {
-            return Ok(Response::Denied {
-                reason: "write access denied".into(),
-            });
+        if let Err(resp) = self.authorize_write(path) {
+            return Ok(resp);
         }
         let full_path = self.authority.resolve(path);
         let prev_blob = self.record.hash_file(&full_path)?;
@@ -170,10 +172,8 @@ impl Server {
     }
 
     fn handle_rename(&mut self, src: &str, dst: &str) -> io::Result<Response> {
-        if !self.authorize_write(src) {
-            return Ok(Response::Denied {
-                reason: "write access denied".into(),
-            });
+        if let Err(resp) = self.authorize_write(src) {
+            return Ok(resp);
         }
         let src_path = self.authority.resolve(src);
         let dst_path = self.authority.resolve(dst);
@@ -205,7 +205,22 @@ impl Server {
         let allowed = match self.authority.check_web(&domain) {
             RuleVerdict::Allow => true,
             RuleVerdict::Deny => false,
-            RuleVerdict::Prompt => self.authority.prompt_user("fetch", url),
+            RuleVerdict::Prompt => match self.authority.editable_approval(
+                "Web Access",
+                url,
+                AuthorityErrorType::WebAccessAbortError,
+            ) {
+                Approval::Approved(edited_url) => return self.perform_fetch(&edited_url),
+                Approval::Aborted {
+                    error_type,
+                    message,
+                } => {
+                    return Ok(Response::Aborted {
+                        error_type,
+                        message,
+                    });
+                }
+            },
         };
         if !allowed {
             return Ok(Response::Denied {
@@ -213,6 +228,10 @@ impl Server {
             });
         }
 
+        self.perform_fetch(url)
+    }
+
+    fn perform_fetch(&mut self, url: &str) -> io::Result<Response> {
         let url_hash = hex_sha256(url.as_bytes());
         let cache_file = self.web_cache_dir.join("pages").join(&url_hash);
 
@@ -256,7 +275,28 @@ impl Server {
             RuleVerdict::Deny => false,
             RuleVerdict::Prompt => {
                 let full_cmd = format!("{} {}", cmd, args.join(" "));
-                self.authority.prompt_user("exec", &full_cmd)
+                match self.authority.editable_approval(
+                    "Tool Call",
+                    &full_cmd,
+                    AuthorityErrorType::ToolCallAbortError,
+                ) {
+                    Approval::Approved(edited) => {
+                        if edited == full_cmd {
+                            true
+                        } else {
+                            return self.handle_exec_shell(&edited);
+                        }
+                    }
+                    Approval::Aborted {
+                        error_type,
+                        message,
+                    } => {
+                        return Ok(Response::Aborted {
+                            error_type,
+                            message,
+                        });
+                    }
+                }
             }
         };
         if !allowed {
@@ -278,34 +318,147 @@ impl Server {
         })
     }
 
+    fn handle_exec_shell(&self, command: &str) -> io::Result<Response> {
+        let command = match self.authority.editable_approval(
+            "Tool Call",
+            command,
+            AuthorityErrorType::ToolCallAbortError,
+        ) {
+            Approval::Approved(command) => command,
+            Approval::Aborted {
+                error_type,
+                message,
+            } => {
+                return Ok(Response::Aborted {
+                    error_type,
+                    message,
+                });
+            }
+        };
+
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .current_dir(self.authority.project_root())
+            .output()?;
+
+        Ok(Response::ExecResult {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            code: output.status.code().unwrap_or(-1),
+        })
+    }
+
     fn handle_register_tool(
         &mut self,
         name: &str,
         path: &str,
-        _args: &[String],
+        args: &[String],
         description: &str,
     ) -> io::Result<Response> {
-        if !self.authority.register_tool(name) {
+        if !self.authority.runtime_registration_allowed() {
             return Ok(Response::Denied {
                 reason: "runtime registration disabled".into(),
             });
         }
-        // Prompt user for approval
-        let msg = format!("register tool '{}' ({}): {}", name, path, description);
-        if !self.authority.prompt_user("register_tool", &msg) {
-            return Ok(Response::Denied {
-                reason: "user denied registration".into(),
-            });
+        let command_pattern = if args.is_empty() {
+            path.to_string()
+        } else {
+            format!("{} {}", path, args.join(" "))
+        };
+        eprintln!("[arcana] Tool registration requested: {name} ({description})");
+        let approved_pattern = match self.authority.editable_approval(
+            "Tool Registration",
+            &command_pattern,
+            AuthorityErrorType::ToolRegistrationAbortError,
+        ) {
+            Approval::Approved(edited) => edited,
+            Approval::Aborted {
+                error_type,
+                message,
+            } => {
+                return Ok(Response::Aborted {
+                    error_type,
+                    message,
+                });
+            }
+        };
+        self.authority.register_tool_runtime(name);
+        self.authority.register_command(&approved_pattern)?;
+        self.regenerate_prompt()?;
+        Ok(Response::Ok)
+    }
+
+    fn handle_register_command(&mut self, pattern: &str) -> io::Result<Response> {
+        match self.authority.editable_approval(
+            "Tool Registration",
+            pattern,
+            AuthorityErrorType::ToolRegistrationAbortError,
+        ) {
+            Approval::Approved(pattern) => self.authority.register_command(&pattern)?,
+            Approval::Aborted {
+                error_type,
+                message,
+            } => {
+                return Ok(Response::Aborted {
+                    error_type,
+                    message,
+                });
+            }
         }
-        // Regenerate prompt after tool registration
-        let content = prompt::generate_prompt(&self.authority)?;
-        fs::write(&self.prompt_path, &content)?;
+        self.regenerate_prompt()?;
+        Ok(Response::Ok)
+    }
+
+    fn handle_register_web(&mut self, domain: &str) -> io::Result<Response> {
+        match self.authority.editable_approval(
+            "Web Access Registration",
+            domain,
+            AuthorityErrorType::WebAccessRegistrationAbortError,
+        ) {
+            Approval::Approved(domain) => self.authority.register_web(&domain)?,
+            Approval::Aborted {
+                error_type,
+                message,
+            } => {
+                return Ok(Response::Aborted {
+                    error_type,
+                    message,
+                });
+            }
+        }
+        self.regenerate_prompt()?;
+        Ok(Response::Ok)
+    }
+
+    fn handle_register_filesystem(
+        &mut self,
+        access: crate::types::FilesystemAccess,
+        path: &str,
+    ) -> io::Result<Response> {
+        match self.authority.editable_approval(
+            "File Access Registration",
+            path,
+            AuthorityErrorType::FileAccessRegistrationAbortError,
+        ) {
+            Approval::Approved(path) => self.authority.register_filesystem(access, &path)?,
+            Approval::Aborted {
+                error_type,
+                message,
+            } => {
+                return Ok(Response::Aborted {
+                    error_type,
+                    message,
+                });
+            }
+        }
+        self.regenerate_prompt()?;
         Ok(Response::Ok)
     }
 
     fn handle_prompt(&self) -> io::Result<Response> {
         let content = prompt::generate_prompt(&self.authority)?;
-        Ok(Response::Instruction { content })
+        Ok(Response::Prompt { content })
     }
 
     fn handle_instruction(&self) -> io::Result<Response> {
@@ -313,12 +466,32 @@ impl Server {
         Ok(Response::Instruction { content })
     }
 
-    fn authorize_write(&self, path: &str) -> bool {
+    fn authorize_write(&self, path: &str) -> Result<(), Response> {
         match self.authority.check_write(path) {
-            RuleVerdict::Allow => true,
-            RuleVerdict::Deny => false,
-            RuleVerdict::Prompt => self.authority.prompt_user("write", path),
+            RuleVerdict::Allow => Ok(()),
+            RuleVerdict::Deny => Err(Response::Denied {
+                reason: "write access denied".into(),
+            }),
+            RuleVerdict::Prompt => match self.authority.approval(
+                "File Access",
+                path,
+                AuthorityErrorType::FileAccessAbortError,
+            ) {
+                Approval::Approved(_) => Ok(()),
+                Approval::Aborted {
+                    error_type,
+                    message,
+                } => Err(Response::Aborted {
+                    error_type,
+                    message,
+                }),
+            },
         }
+    }
+
+    fn regenerate_prompt(&self) -> io::Result<()> {
+        let content = prompt::generate_prompt(&self.authority)?;
+        fs::write(&self.prompt_path, &content)
     }
 }
 
