@@ -348,7 +348,9 @@ arcana --provider <provider>    # Override provider for this session
 arcana --reset [<project>]      # Reset project workspace ./.arcana/ (confirmation required)
 arcana --reset --factory        # Reset global ~/.arcana/ (extra warning + confirmation)
 arcana resume [--last | <id>]   # Resume a session
-arcana recover <project> [--to-seq N]  # Recover project state (see authority design)
+arcana recovery [<project>] --list            # List recorded project mutations
+arcana recovery [<project>] --to-sequence N   # Restore recorded project state from .arcana/git_record
+arcana completions <shell>      # Print shell startup completions for bash/zsh/fish
 arcana check                    # Check setup & connectivity
 arcana version                  # Print version
 ```

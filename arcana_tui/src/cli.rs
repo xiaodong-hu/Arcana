@@ -43,8 +43,13 @@ pub enum Command {
     Onboard(OnboardArgs),
     /// Resume a previous session
     Resume(ResumeArgs),
-    /// Recover project state from git_record
-    Recover(RecoverArgs),
+    /// Removed; use `arcana recovery`
+    #[command(hide = true)]
+    Recover(DeprecatedRecoverArgs),
+    /// Inspect or restore project state from git_record
+    Recovery(RecoveryArgs),
+    /// Print shell completion script
+    Completions(CompletionsArgs),
     /// Check system health and connectivity
     Check,
     /// Print version
@@ -80,12 +85,30 @@ pub struct ResumeArgs {
 }
 
 #[derive(Parser)]
-pub struct RecoverArgs {
-    /// Project root directory
-    pub project: PathBuf,
-    /// Recover to specific sequence number
+pub struct RecoveryArgs {
+    /// Project root directory (defaults to current directory)
+    pub project: Option<PathBuf>,
+    /// List recorded mutations
     #[arg(long)]
-    pub to_seq: Option<u64>,
+    pub list: bool,
+    /// Recover to specific sequence number
+    #[arg(long = "to-sequence")]
+    pub to_sequence: Option<u64>,
+    /// Skip the destructive recovery confirmation prompt
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+}
+
+#[derive(Parser)]
+pub struct DeprecatedRecoverArgs {
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub args: Vec<String>,
+}
+
+#[derive(Parser)]
+pub struct CompletionsArgs {
+    /// Shell to generate completions for: bash, zsh, fish
+    pub shell: String,
 }
 
 #[derive(Parser)]

@@ -85,6 +85,7 @@ pub struct ThinkingBlock {
 pub struct ToolCall {
     pub tool_type: ToolType,
     pub description: String,
+    pub action: Option<String>,
     pub result: Option<String>,
     pub duration_ms: u64,
     pub collapsed: bool,

@@ -2,7 +2,9 @@ use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 
 use crate::theme::Theme;
-use crate::types::{AgentMode, StatusData, PanelState, TaskInfo, SkillInfo, SubAgentInfo, TaskStatus};
+use crate::types::{
+    AgentMode, PanelState, SkillInfo, StatusData, SubAgentInfo, TaskInfo, TaskStatus,
+};
 
 /// Render the status bar. Supports multiline expansion via panel_state toggles.
 /// Default: expanded (multiline). Ctrl+S skills, Ctrl+A agents.
@@ -43,19 +45,38 @@ pub fn status_bar_height(
     _tasks: &[TaskInfo],
 ) -> u16 {
     let mut h: u16 = 1; // main line always
-    if panel_state.skills_expanded && !skills.is_empty() { h += 1; }
-    if panel_state.agents_expanded && !agents.is_empty() { h += 1; }
+    if panel_state.skills_expanded && !skills.is_empty() {
+        h += 1;
+    }
+    if panel_state.agents_expanded && !agents.is_empty() {
+        h += 1;
+    }
     h
 }
 
-fn build_main_line<'a>(status: &StatusData, tasks: &[TaskInfo], skills: &[SkillInfo], agents: &[SubAgentInfo], agent_mode: AgentMode) -> Line<'a> {
+fn build_main_line<'a>(
+    status: &StatusData,
+    tasks: &[TaskInfo],
+    skills: &[SkillInfo],
+    agents: &[SubAgentInfo],
+    agent_mode: AgentMode,
+) -> Line<'a> {
     let filled = if status.tokens_max > 0 {
         ((status.tokens_used as f64 / status.tokens_max as f64) * 10.0).round() as usize
-    } else { 0 };
-    let bar: String = format!("[{}{}]", "█".repeat(filled.min(10)), "░".repeat(10 - filled.min(10)));
+    } else {
+        0
+    };
+    let bar: String = format!(
+        "[{}{}]",
+        "█".repeat(filled.min(10)),
+        "░".repeat(10 - filled.min(10))
+    );
     let tokens_str = format_tokens(status.tokens_used, status.tokens_max);
 
-    let tasks_done = tasks.iter().filter(|t| t.status == TaskStatus::Completed).count();
+    let tasks_done = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Completed)
+        .count();
     let tasks_total = tasks.len();
     let sys_skills = skills.iter().filter(|s| s.system).count();
     let user_skills = skills.iter().filter(|s| !s.system).count();
@@ -66,7 +87,10 @@ fn build_main_line<'a>(status: &StatusData, tasks: &[TaskInfo], skills: &[SkillI
     let separator = Style::default().fg(light_gray);
 
     let spans = vec![
-        Span::styled(format!(" {} ", status.model_name), Style::default().fg(Color::White)),
+        Span::styled(
+            format!(" {} ", status.model_name),
+            Style::default().fg(Color::White),
+        ),
         Span::styled("│", separator),
         Span::styled(
             format!(" {} ", agent_mode.label()),
@@ -77,13 +101,25 @@ fn build_main_line<'a>(status: &StatusData, tasks: &[TaskInfo], skills: &[SkillI
             }),
         ),
         Span::styled("│", separator),
-        Span::styled(format!(" {} {} ", bar, tokens_str), Style::default().fg(light_gray)),
+        Span::styled(
+            format!(" {} {} ", bar, tokens_str),
+            Style::default().fg(light_gray),
+        ),
         Span::styled("│", separator),
-        Span::styled(format!(" Tasks: {}/{} ", tasks_done, tasks_total), Style::default().fg(light_gray)),
+        Span::styled(
+            format!(" Tasks: {}/{} ", tasks_done, tasks_total),
+            Style::default().fg(light_gray),
+        ),
         Span::styled("│", separator),
-        Span::styled(format!(" Sub-Agents: {} ", agents_count), Style::default().fg(light_gray)),
+        Span::styled(
+            format!(" Sub-Agents: {} ", agents_count),
+            Style::default().fg(light_gray),
+        ),
         Span::styled("│", separator),
-        Span::styled(format!(" Skills (System/User): {}/{} ", sys_skills, user_skills), Style::default().fg(light_gray)),
+        Span::styled(
+            format!(" Skills (System/User): {}/{} ", sys_skills, user_skills),
+            Style::default().fg(light_gray),
+        ),
     ];
 
     Line::from(spans)
@@ -92,7 +128,10 @@ fn build_main_line<'a>(status: &StatusData, tasks: &[TaskInfo], skills: &[SkillI
 fn build_skills_line<'a>(skills: &[SkillInfo]) -> Line<'a> {
     let names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
     Line::from(vec![
-        Span::styled(format!(" Skills ({}): ", skills.len()), Style::default().fg(Color::Cyan)),
+        Span::styled(
+            format!(" Skills ({}): ", skills.len()),
+            Style::default().fg(Color::Cyan),
+        ),
         Span::styled(names.join(", "), Style::default().fg(Color::Gray)),
     ])
 }
@@ -100,9 +139,15 @@ fn build_skills_line<'a>(skills: &[SkillInfo]) -> Line<'a> {
 fn build_agents_line<'a>(agents: &[SubAgentInfo]) -> Line<'a> {
     let running = agents.iter().filter(|a| a.status == "running").count();
     let frozen = agents.iter().filter(|a| a.status == "frozen").count();
-    let names: Vec<String> = agents.iter().map(|a| format!("{}({})", a.name, a.status)).collect();
+    let names: Vec<String> = agents
+        .iter()
+        .map(|a| format!("{}({})", a.name, a.status))
+        .collect();
     Line::from(vec![
-        Span::styled(format!(" Agents {}/{}: ", running, frozen), Style::default().fg(Color::Magenta)),
+        Span::styled(
+            format!(" Agents {}/{}: ", running, frozen),
+            Style::default().fg(Color::Magenta),
+        ),
         Span::styled(names.join(", "), Style::default().fg(Color::Gray)),
     ])
 }

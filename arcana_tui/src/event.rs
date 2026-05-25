@@ -1,4 +1,7 @@
-use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event as CrosstermEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    MouseEvent, MouseEventKind,
+};
 use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -23,9 +26,15 @@ pub enum AppEvent {
     /// Agent response complete (with optional usage stats)
     ResponseComplete(Option<crate::types::ResponseStats>),
     /// Sub-agent status update
-    SubAgentUpdate { id: String, status: String },
+    SubAgentUpdate {
+        id: String,
+        status: String,
+    },
     /// Toast notification
-    Toast { message: String, detail: Option<String> },
+    Toast {
+        message: String,
+        detail: Option<String>,
+    },
     /// LLM error (rate limit, API error, etc.)
     LlmError(crate::types::LlmError),
     /// Tick (for animations and elapsed time updates)
@@ -40,7 +49,11 @@ pub enum AppEvent {
 
 /// Spawn the terminal event reader task using async EventStream.
 /// The task is properly cancellable via abort() — no blocking poll.
-pub fn spawn_event_reader() -> (mpsc::UnboundedSender<AppEvent>, mpsc::UnboundedReceiver<AppEvent>, tokio::task::JoinHandle<()>) {
+pub fn spawn_event_reader() -> (
+    mpsc::UnboundedSender<AppEvent>,
+    mpsc::UnboundedReceiver<AppEvent>,
+    tokio::task::JoinHandle<()>,
+) {
     let (tx, rx) = mpsc::unbounded_channel();
     let tx2 = tx.clone();
 

@@ -552,7 +552,7 @@ fn authority_socket_ready(socket_path: &Path) -> bool {
     socket_path.exists() && UnixStream::connect(socket_path).is_ok()
 }
 
-fn find_authority_binary() -> Option<PathBuf> {
+pub(crate) fn find_authority_binary() -> Option<PathBuf> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent()?;
     let candidates = [
@@ -1281,10 +1281,12 @@ Hotkeys:\n\
                                             response,
                                             tool_type,
                                             description,
+                                            action,
                                         } => {
                                             app.viewport.add_tool_call(ToolCall {
                                                 tool_type,
                                                 description,
+                                                action,
                                                 result: Some(response.to_string()),
                                                 duration_ms: 0,
                                                 collapsed: false,
@@ -1299,6 +1301,7 @@ Hotkeys:\n\
                             app.viewport.add_tool_call(ToolCall {
                                 tool_type: approved.tool_type,
                                 description: approved.description.clone(),
+                                action: approved.action.clone(),
                                 result: None,
                                 duration_ms: 0,
                                 collapsed: false,
@@ -1707,6 +1710,7 @@ struct ApprovedAuthorityRequest {
     request: serde_json::Value,
     tool_type: ToolType,
     description: String,
+    action: Option<String>,
 }
 
 enum AuthorityApproval {
@@ -1715,6 +1719,7 @@ enum AuthorityApproval {
         response: serde_json::Value,
         tool_type: ToolType,
         description: String,
+        action: Option<String>,
     },
 }
 
@@ -2113,6 +2118,7 @@ fn approve_authority_request(
                 request: confirmed_authority_request(request),
                 tool_type: details.tool_type,
                 description: details.target,
+                action: details.action.map(str::to_string),
             }));
         }
 
@@ -2126,6 +2132,7 @@ fn approve_authority_request(
                     return Ok(aborted_authority_approval(
                         details.tool_type,
                         details.target,
+                        details.action,
                         details.abort_error_type,
                         format!("{} edit produced an empty request", details.kind),
                     ));
@@ -2134,6 +2141,7 @@ fn approve_authority_request(
                     return Ok(aborted_authority_approval(
                         details.tool_type,
                         details.target,
+                        details.action,
                         details.abort_error_type,
                         format!("{} edit failed: {e}", details.kind),
                     ));
@@ -2145,6 +2153,7 @@ fn approve_authority_request(
             return Ok(aborted_authority_approval(
                 details.tool_type,
                 details.target.clone(),
+                details.action,
                 details.abort_error_type,
                 format!("{} aborted by user: {}", details.kind, details.target),
             ));
@@ -2161,6 +2170,7 @@ struct AuthorityRequestDetails {
     kind: &'static str,
     verb: &'static str,
     target: String,
+    action: Option<&'static str>,
     tool_type: ToolType,
     abort_error_type: &'static str,
 }
@@ -2171,6 +2181,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Tool Call",
             verb: "run of",
             target: request["command"].as_str().unwrap_or("").to_string(),
+            action: None,
             tool_type: ToolType::Shell,
             abort_error_type: "ToolCallAbortError",
         },
@@ -2181,6 +2192,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
                 .map(|args| {
                     args.iter()
                         .filter_map(|arg| arg.as_str())
+                        .map(shell_display_arg)
                         .collect::<Vec<_>>()
                         .join(" ")
                 })
@@ -2193,6 +2205,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
                 } else {
                     format!("{cmd} {args}")
                 },
+                action: None,
                 tool_type: ToolType::Shell,
                 abort_error_type: "ToolCallAbortError",
             }
@@ -2201,6 +2214,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Web Access",
             verb: "web fetch/browse of",
             target: request["url"].as_str().unwrap_or("").to_string(),
+            action: Some("Fetch"),
             tool_type: ToolType::Web,
             abort_error_type: "WebAccessAbortError",
         },
@@ -2212,6 +2226,11 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
                 _ => "delete access of",
             },
             target: request["path"].as_str().unwrap_or("").to_string(),
+            action: match request["op"].as_str().unwrap_or("") {
+                "read" | "read_text" => Some("Read"),
+                "write" | "write_text" => Some("Write"),
+                _ => Some("Delete"),
+            },
             tool_type: ToolType::File,
             abort_error_type: "FileAccessAbortError",
         },
@@ -2223,6 +2242,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
                 request["src"].as_str().unwrap_or(""),
                 request["dst"].as_str().unwrap_or("")
             ),
+            action: Some("Rename"),
             tool_type: ToolType::File,
             abort_error_type: "FileAccessAbortError",
         },
@@ -2230,6 +2250,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Registration",
             verb: "registration of",
             target: request["pattern"].as_str().unwrap_or("").to_string(),
+            action: Some("Register"),
             tool_type: ToolType::Other,
             abort_error_type: "ToolRegistrationAbortError",
         },
@@ -2237,6 +2258,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Registration",
             verb: "registration of",
             target: request["domain"].as_str().unwrap_or("").to_string(),
+            action: Some("Register"),
             tool_type: ToolType::Web,
             abort_error_type: "WebAccessRegistrationAbortError",
         },
@@ -2244,6 +2266,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Registration",
             verb: "registration of",
             target: request["path"].as_str().unwrap_or("").to_string(),
+            action: Some("Register"),
             tool_type: ToolType::File,
             abort_error_type: "FileAccessRegistrationAbortError",
         },
@@ -2251,6 +2274,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Registration",
             verb: "registration of",
             target: request["path"].as_str().unwrap_or("").to_string(),
+            action: Some("Register"),
             tool_type: ToolType::Other,
             abort_error_type: "ToolRegistrationAbortError",
         },
@@ -2258,15 +2282,27 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Request",
             verb: "request of",
             target: request.to_string(),
+            action: Some("Request"),
             tool_type: ToolType::Other,
             abort_error_type: "ToolCallAbortError",
         },
     }
 }
 
+fn shell_display_arg(arg: &str) -> String {
+    if arg.chars().all(|ch| {
+        ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ':' | '=' | '+')
+    }) {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\"'\"'"))
+    }
+}
+
 fn aborted_authority_approval(
     tool_type: ToolType,
     description: String,
+    action: Option<&'static str>,
     error_type: &'static str,
     message: String,
 ) -> AuthorityApproval {
@@ -2278,6 +2314,7 @@ fn aborted_authority_approval(
         }),
         tool_type,
         description,
+        action: action.map(str::to_string),
     }
 }
 
@@ -2371,6 +2408,7 @@ fn format_authority_tool_result(response: &serde_json::Value) -> String {
         Some("exec_result") => {
             let stdout = response["stdout"].as_str().unwrap_or("");
             let stderr = response["stderr"].as_str().unwrap_or("");
+            let diff = response["diff"].as_str().unwrap_or("");
             let mut out = String::new();
             if !stdout.is_empty() {
                 out.push_str(stdout.trim_end_matches('\n'));
@@ -2380,6 +2418,23 @@ fn format_authority_tool_result(response: &serde_json::Value) -> String {
                     out.push('\n');
                 }
                 out.push_str(stderr.trim_end_matches('\n'));
+            }
+            if !diff.trim().is_empty() {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str(diff.trim_end_matches('\n'));
+            }
+            out
+        }
+        Some("mutation") => {
+            let mut out = mutation_summary(response);
+            let diff = response["diff"].as_str().unwrap_or("");
+            if !diff.trim().is_empty() {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str(diff.trim_end_matches('\n'));
             }
             out
         }
@@ -2414,6 +2469,22 @@ fn format_authority_tool_result(response: &serde_json::Value) -> String {
         ),
         _ => response.to_string(),
     }
+}
+
+fn mutation_summary(response: &serde_json::Value) -> String {
+    let Some(records) = response["records"].as_array() else {
+        return String::new();
+    };
+    records
+        .iter()
+        .filter_map(|record| {
+            let seq = record["seq"].as_u64()?;
+            let op = record["op"].as_str().unwrap_or("mutation");
+            let path = record["path"].as_str().unwrap_or("<unknown>");
+            Some(format!("recorded #{seq}: {op} {path}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn authority_request(

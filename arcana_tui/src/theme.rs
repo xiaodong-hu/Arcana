@@ -47,7 +47,7 @@ impl Theme {
             prompt_glyph: Style::default()
                 .fg(Color::Rgb(0, 166, 79)) // pigment green
                 .add_modifier(Modifier::BOLD),
-            composer_bg: Color::Rgb(16, 12, 8),  // smoky black #100C08
+            composer_bg: Color::Rgb(16, 12, 8), // smoky black #100C08
             composer_text: Style::default().fg(Color::White),
             overlay_border: Color::Rgb(0, 212, 255),
             dim: Style::default().fg(Color::Rgb(140, 140, 160)),
@@ -61,10 +61,7 @@ impl Theme {
     pub fn light() -> Self {
         Self {
             name: "light".into(),
-            banner_gradient: (
-                Color::Rgb(90, 30, 150),
-                Color::Rgb(0, 120, 200),
-            ),
+            banner_gradient: (Color::Rgb(90, 30, 150), Color::Rgb(0, 120, 200)),
             user_message: Style::default()
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),

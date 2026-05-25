@@ -18,5 +18,8 @@ Thumbs.db
 # Runtime data (never commit)
 .arcana/
 
+.agents
+.codex
+
 # ONNX models (too large for git)
 *.onnx

@@ -200,7 +200,9 @@ Authority:
 
 ### Record System (Git-like Action Tree)
 
-Integrated into the authority program. Every approved mutation is recorded *before* the filesystem write is committed.
+Integrated into the authority program. The recorder treats mutation as an actual project-tree delta, not as a hard-coded command name. Before an approved mutating API or command runs, AAS scans the recoverable project tree and stores all pre-operation blobs. After the operation finishes, AAS scans again, records every added/modified/deleted path, and returns a git-compatible unified diff to the agent/TUI.
+
+This means shell commands are recordable without trying to predict which command names are mutating: if `python`, `cargo`, `sed`, or any other approved command changes files under the project, the before/after tree delta is recorded.
 
 #### Recording Storage Layout
 
@@ -218,10 +220,23 @@ Integrated into the authority program. Every approved mutation is recorded *befo
 └── HEAD                # latest action sequence number
 ```
 
+Volatile authority runtime data is excluded from recovery records:
+
+```
+.git/
+.arcana/git_record/
+.arcana/authority.sock
+.arcana/authorized_prompt.md
+.arcana/web_cache/
+.arcana/tmp/
+```
+
+Project authority configuration, such as `.arcana/authority.toml`, is recordable because registration changes are meaningful project state.
+
 #### Action Log Entry Format
 
 ```json
-{"seq": 1, "ts": "2026-05-19T21:30:00Z", "op": "write", "path": "src/main.rs", "blob": "abcdef…", "prev_blob": "null"}
+{"seq":1,"ts":"1760000000s_since_epoch","op":"write","path":"src/main.rs","blob":"abcdef...","prev_blob":"123456..."}
 ```
 
 #### Snapshot Policy
@@ -242,9 +257,10 @@ Note: `objects/` blobs are **never** garbage-collected — they are needed for f
 
 Recovery reconstructs the project state at any given sequence number.
 
-**Recovery is a subcommand of the same `authority_and_record` binary** — no separate program needed. Invoked as:
+**Recovery is a subcommand of the same `authority_and_recording` binary** — no separate program needed. Invoked as:
 ```
-authority_and_record recover <project_root> [--to-seq <N>]
+authority_and_recording recovery <project_root> --list
+authority_and_recording recovery <project_root> --to-sequence <N>
 ```
 
 **Algorithm:**
@@ -252,11 +268,24 @@ authority_and_record recover <project_root> [--to-seq <N>]
 2. Load that snapshot's tree state (path → blob hash).
 3. Replay `actions.jsonl` entries from `snapshot.seq + 1` through `target_seq`, applying each op to the in-memory tree.
 4. For each path in the final tree, read the blob from `objects/` and write it to the project directory.
-5. Delete any files that exist on disk but not in the recovered tree.
+5. Delete any recoverable project files that exist on disk but not in the recovered tree.
+6. Preserve recorder storage itself, so recovery works even if the rest of the project was removed.
+7. Record the recovery delta as a new append-only mutation instead of moving `HEAD` backward. This keeps all future states addressable and avoids duplicate sequence numbers after rollback.
 
 **If no snapshot exists** (or recovering to seq < first snapshot): replay all actions from seq 1.
 
 **Full recovery guarantee:** Given `objects/` + `actions.jsonl`, the entire project can be reconstructed at any point in time. Snapshots only accelerate recovery — they are not required for correctness.
+
+The TUI command is:
+
+```
+arcana recovery [<project>] --list
+arcana recovery [<project>] --to-sequence N
+```
+
+Both commands show a boxed warning and ask for confirmation before overwriting
+the working tree. `arcana recovery` defaults to the current directory when no
+project path is supplied.
 
 
 ### Web Fetch Management

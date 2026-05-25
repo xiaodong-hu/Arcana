@@ -754,7 +754,6 @@ fn autocomplete_slash(input: &str) -> Option<String> {
     if normalized == "\\config" {
         return Some("\\config ".to_string());
     }
-
     let matches: Vec<&&str> = ALL_COMMANDS
         .iter()
         .filter(|c| c.starts_with(normalized))

@@ -192,7 +192,12 @@ impl QueryOverlay {
 
         let conv_area = Rect::new(inner.x, inner.y, inner.width, conv_height);
         let sep_area = Rect::new(inner.x, inner.y + conv_height, inner.width, 1);
-        let comp_area = Rect::new(inner.x, inner.y + conv_height + 1, inner.width, composer_height);
+        let comp_area = Rect::new(
+            inner.x,
+            inner.y + conv_height + 1,
+            inner.width,
+            composer_height,
+        );
 
         // Render conversation
         let mut lines: Vec<Line> = Vec::new();
@@ -222,29 +227,46 @@ impl QueryOverlay {
                         if think.collapsed {
                             lines.push(Line::from(vec![
                                 Span::styled(
-                                    format!("▸ Thinking ({} tokens, {:.1}s) ",
-                                        think.token_count, think.duration_ms as f64 / 1000.0),
+                                    format!(
+                                        "▸ Thinking ({} tokens, {:.1}s) ",
+                                        think.token_count,
+                                        think.duration_ms as f64 / 1000.0
+                                    ),
                                     theme.thinking_block,
                                 ),
-                                Span::styled("ctrl+o to expand", Style::default().fg(Color::Rgb(160, 160, 170))),
+                                Span::styled(
+                                    "ctrl+o to expand",
+                                    Style::default().fg(Color::Rgb(160, 160, 170)),
+                                ),
                             ]));
                         } else {
                             lines.push(Line::from(vec![
                                 Span::styled(
-                                    format!("▾ Thinking ({} tokens, {:.1}s) ",
-                                        think.token_count, think.duration_ms as f64 / 1000.0),
+                                    format!(
+                                        "▾ Thinking ({} tokens, {:.1}s) ",
+                                        think.token_count,
+                                        think.duration_ms as f64 / 1000.0
+                                    ),
                                     theme.thinking_block,
                                 ),
-                                Span::styled("ctrl+o to collapse", Style::default().fg(Color::Rgb(160, 160, 170))),
+                                Span::styled(
+                                    "ctrl+o to collapse",
+                                    Style::default().fg(Color::Rgb(160, 160, 170)),
+                                ),
                             ]));
-                            for md_line in crate::render_md::render_markdown(&think.content, theme.thinking_block) {
+                            for md_line in crate::render_md::render_markdown(
+                                &think.content,
+                                theme.thinking_block,
+                            ) {
                                 let mut spans = vec![Span::raw("  ".to_string())];
                                 spans.extend(md_line.spans);
                                 lines.push(Line::from(spans));
                             }
                         }
                     }
-                    for md_line in crate::render_md::render_markdown(&msg.content, theme.agent_response) {
+                    for md_line in
+                        crate::render_md::render_markdown(&msg.content, theme.agent_response)
+                    {
                         lines.push(md_line);
                     }
                     lines.push(Line::from(""));
@@ -259,21 +281,33 @@ impl QueryOverlay {
                 let elapsed = think.start_time.elapsed().as_secs_f64();
                 if !self.thinking_expanded {
                     // Collapsed
-                    let header = format!("▸ Thinking ({} tokens, {:.1}s) ",
-                        think.token_count, elapsed);
+                    let header = format!(
+                        "▸ Thinking ({} tokens, {:.1}s) ",
+                        think.token_count, elapsed
+                    );
                     lines.push(Line::from(vec![
                         Span::styled(header, theme.thinking_block),
-                        Span::styled("ctrl+o to expand", Style::default().fg(Color::Rgb(160, 160, 170))),
+                        Span::styled(
+                            "ctrl+o to expand",
+                            Style::default().fg(Color::Rgb(160, 160, 170)),
+                        ),
                     ]));
                 } else {
                     // Expanded
-                    let header = format!("▾ Thinking ({} tokens, {:.1}s) ",
-                        think.token_count, elapsed);
+                    let header = format!(
+                        "▾ Thinking ({} tokens, {:.1}s) ",
+                        think.token_count, elapsed
+                    );
                     lines.push(Line::from(vec![
                         Span::styled(header, theme.thinking_block),
-                        Span::styled("ctrl+o to collapse", Style::default().fg(Color::Rgb(160, 160, 170))),
+                        Span::styled(
+                            "ctrl+o to collapse",
+                            Style::default().fg(Color::Rgb(160, 160, 170)),
+                        ),
                     ]));
-                    for md_line in crate::render_md::render_markdown(&think.content, theme.thinking_block) {
+                    for md_line in
+                        crate::render_md::render_markdown(&think.content, theme.thinking_block)
+                    {
                         let mut spans = vec![Span::raw("  ".to_string())];
                         spans.extend(md_line.spans);
                         lines.push(Line::from(spans));
@@ -281,7 +315,9 @@ impl QueryOverlay {
                 }
             }
             if !self.streaming_text.is_empty() {
-                for md_line in crate::render_md::render_markdown(&self.streaming_text, theme.agent_response) {
+                for md_line in
+                    crate::render_md::render_markdown(&self.streaming_text, theme.agent_response)
+                {
                     lines.push(md_line);
                 }
             }
@@ -291,7 +327,11 @@ impl QueryOverlay {
         let panel_width = conv_area.width as usize;
         let mut wrapped_lines: Vec<Line> = Vec::new();
         for line in lines {
-            let line_width: usize = line.spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum();
+            let line_width: usize = line
+                .spans
+                .iter()
+                .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                .sum();
             if line_width <= panel_width || panel_width == 0 {
                 wrapped_lines.push(line);
             } else {
@@ -314,7 +354,10 @@ impl QueryOverlay {
                         // At least one char
                         byte_end = remaining.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
                     }
-                    wrapped_lines.push(Line::from(Span::styled(remaining[..byte_end].to_string(), style)));
+                    wrapped_lines.push(Line::from(Span::styled(
+                        remaining[..byte_end].to_string(),
+                        style,
+                    )));
                     remaining = &remaining[byte_end..];
                 }
             }

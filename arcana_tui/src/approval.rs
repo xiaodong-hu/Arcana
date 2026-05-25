@@ -117,7 +117,12 @@ impl ApprovalPanel {
         } else {
             self.description.clone()
         };
-        lines.push(Line::from(Span::styled(desc, Style::default().fg(Color::White).add_modifier(Modifier::BOLD))));
+        lines.push(Line::from(Span::styled(
+            desc,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )));
         lines.push(Line::from(""));
 
         // Options

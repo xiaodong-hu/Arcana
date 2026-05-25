@@ -81,7 +81,7 @@ Every existing coding agent is a **stateless parrot** — it forgets everything 
 
 ### 1. Rust-Hosted Strict Authority & Recording System
 
-Every file mutation and system command is gated and recorded. Full git-like history of agent actions. **The agent cannot ruin your project** — every change is recoverable.
+Every privileged operation is gated by AAS. File writes, deletes, renames, authority registrations, and any project-tree changes caused by approved shell commands are recorded by comparing the project tree before and after the operation. Each recorded mutation returns a git-compatible diff for review. **The agent cannot silently overwrite your project** — every recorded change is recoverable from `.arcana/git_record`.
 
 ```
 .arcana/git_record/
@@ -91,7 +91,7 @@ Every file mutation and system command is gated and recorded. Full git-like hist
 └── HEAD              # Current sequence number
 ```
 
-Recover any state: `arcana recover . --to-seq 42`
+Inspect recorded mutations before recovering: `arcana recovery --list`. Recover any recorded state, even after project files were deleted as long as `.arcana/git_record` remains: `arcana recovery --to-sequence 42`
 
 #### Command Authorization
 
@@ -400,6 +400,8 @@ Type `\` then press `↓` to browse all commands with arrow keys. Press `Esc` to
 
 ---
 
+Shell startup completions are available with `arcana completions bash`, `arcana completions zsh`, or `arcana completions fish`.
+
 ## Configuration
 
 Config lives at `~/.arcana/config.toml`. Arcana prompts to create the global
@@ -507,8 +509,8 @@ Arcana-Agent/
 - [ ] **Skills daemon** — trigger-based skill loading, hot-reload, manifest parsing
 - [ ] **Memory system** — knowledge DB, semantic search, error patterns, session recall
 - [ ] **Embedding model download** — `arcana onboard` does not yet download `all-MiniLM-L6-v2.onnx`
-- [ ] **Authority & recording** — permission gate, git-like mutation recording, crash recovery (prompt generation implemented)
-- [ ] **`arcana recover`** — restore project state from `git_record`
+- [x] **Authority & recording** — permission gate, git-like mutation recording, command-delta recording, and diff reporting
+- [x] **`arcana recovery`** — inspect and restore project state from `git_record`
 - [ ] **Tool calls** — shell execution, file read/write, search, web fetch (IPC protocol implemented)
 - [ ] **Diff review panel** — interactive accept/reject of file mutations
 - [ ] **OpenAI / Anthropic provider support** — only DeepSeek is wired up

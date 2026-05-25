@@ -86,7 +86,9 @@ fn highlight_code_block<'a>(
                             .map(|span| {
                                 Span::styled(
                                     span.text,
-                                    Style::default().fg(span.fg).bg(base_style.bg.unwrap_or(Color::Reset)),
+                                    Style::default()
+                                        .fg(span.fg)
+                                        .bg(base_style.bg.unwrap_or(Color::Reset)),
                                 )
                             })
                             .collect::<Vec<_>>(),
@@ -249,13 +251,17 @@ fn split_word_boundaries(text: &str) -> Vec<&str> {
 
 fn generic_keywords(lang: &str) -> &'static [&'static str] {
     match lang.trim().to_ascii_lowercase().as_str() {
-        "typst" | "typ" => &["let", "set", "show", "import", "include", "if", "else", "for", "in"],
+        "typst" | "typ" => &[
+            "let", "set", "show", "import", "include", "if", "else", "for", "in",
+        ],
         "tex" | "latex" | "ltx" => &["begin", "end", "documentclass", "usepackage", "newcommand"],
         "julia" | "jl" => &[
             "function", "end", "if", "else", "elseif", "for", "while", "let", "local", "global",
             "struct", "module", "using", "import", "return",
         ],
-        "zig" => &["const", "var", "fn", "pub", "if", "else", "while", "for", "return", "struct"],
+        "zig" => &[
+            "const", "var", "fn", "pub", "if", "else", "while", "for", "return", "struct",
+        ],
         _ => &[
             "fn", "let", "const", "var", "if", "else", "for", "while", "return", "class", "struct",
             "import", "from", "use", "pub", "def",
