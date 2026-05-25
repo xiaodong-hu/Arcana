@@ -1,6 +1,7 @@
 mod app;
 mod approval;
 mod banner;
+mod behavioral;
 mod cli;
 mod composer;
 mod config;

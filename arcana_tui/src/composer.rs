@@ -22,6 +22,8 @@ pub const ALL_COMMANDS: &[&str] = &[
     "\\authorization edit",
     "\\instruction show",
     "\\instruction edit",
+    "\\behavioral show",
+    "\\behavioral edit",
 ];
 
 /// The input composer at the bottom of the screen.
@@ -674,34 +676,54 @@ fn slash_hint(input: &str) -> &'static str {
         "\\s" | "\\st" | "\\sta" | "\\stat" | "\\statu" | "\\status" => " ← show status",
         "\\u" | "\\us" | "\\usa" | "\\usag" | "\\usage" => " ← session token/cost stats",
         "\\co" | "\\con" | "\\conf" | "\\confi" | "\\config" => " list|edit",
-        "\\config l" | "\\config li" | "\\config lis" | "\\config list" => {
-            " ← show config.toml"
-        }
+        "\\config l" | "\\config li" | "\\config lis" | "\\config list" => " ← show config.toml",
         "\\config e" | "\\config ed" | "\\config edi" | "\\config edit" => {
             " ← open config.toml in $EDITOR"
         }
-        "\\au" | "\\aut" | "\\auth" | "\\autho" | "\\author" | "\\authori"
-        | "\\authoriz" | "\\authoriza" | "\\authorizat" | "\\authorizati"
-        | "\\authorizatio" | "\\authorization" => " list|add|remove|edit",
-        "\\authorization l" | "\\authorization li" | "\\authorization lis"
+        "\\au" | "\\aut" | "\\auth" | "\\autho" | "\\author" | "\\authori" | "\\authoriz"
+        | "\\authoriza" | "\\authorizat" | "\\authorizati" | "\\authorizatio"
+        | "\\authorization" => " list|add|remove|edit",
+        "\\authorization l"
+        | "\\authorization li"
+        | "\\authorization lis"
         | "\\authorization list" => " ← show authorized commands",
         "\\authorization a" | "\\authorization ad" | "\\authorization add" => {
             " <command> ← add to allow list"
         }
-        "\\authorization r" | "\\authorization re" | "\\authorization rem"
-        | "\\authorization remo" | "\\authorization remov" | "\\authorization remove" => {
-            " <command> ← remove from allow list"
-        }
-        "\\authorization e" | "\\authorization ed" | "\\authorization edi"
+        "\\authorization r"
+        | "\\authorization re"
+        | "\\authorization rem"
+        | "\\authorization remo"
+        | "\\authorization remov"
+        | "\\authorization remove" => " <command> ← remove from allow list",
+        "\\authorization e"
+        | "\\authorization ed"
+        | "\\authorization edi"
         | "\\authorization edit" => " ← open authority.toml in $EDITOR",
-        "\\in" | "\\ins" | "\\inst" | "\\instr" | "\\instru" | "\\instruc"
-        | "\\instruct" | "\\instructi" | "\\instructio" | "\\instruction" => {
-            " show|edit"
+        "\\in" | "\\ins" | "\\inst" | "\\instr" | "\\instru" | "\\instruc" | "\\instruct"
+        | "\\instructi" | "\\instructio" | "\\instruction" => " show|edit",
+        "\\instruction s" | "\\instruction sh" | "\\instruction sho" | "\\instruction show" => {
+            " ← show INSTRUCTION.md"
         }
-        "\\instruction s" | "\\instruction sh" | "\\instruction sho"
-        | "\\instruction show" => " ← show INSTRUCTION.md",
-        "\\instruction e" | "\\instruction ed" | "\\instruction edi"
-        | "\\instruction edit" => " ← open INSTRUCTION.md in $EDITOR",
+        "\\instruction e" | "\\instruction ed" | "\\instruction edi" | "\\instruction edit" => {
+            " ← open INSTRUCTION.md in $EDITOR"
+        }
+        "\\b"
+        | "\\be"
+        | "\\beh"
+        | "\\beha"
+        | "\\behav"
+        | "\\behavi"
+        | "\\behavio"
+        | "\\behavior"
+        | "\\behaviora"
+        | "\\behavioral" => " show|edit",
+        "\\behavioral s" | "\\behavioral sh" | "\\behavioral sho" | "\\behavioral show" => {
+            " ← show behavioral line"
+        }
+        "\\behavioral e" | "\\behavioral ed" | "\\behavioral edi" | "\\behavioral edit" => {
+            " ← edit behavioral line in $EDITOR"
+        }
         "\\w" | "\\wo" | "\\wor" | "\\work" | "\\worki" | "\\workin" | "\\working" => {
             " ← show working directory"
         }
@@ -719,11 +741,19 @@ fn autocomplete_slash(input: &str) -> Option<String> {
         return None; // too ambiguous
     }
     let normalized = match input {
-        "\\au" | "\\aut" | "\\auth" | "\\autho" | "\\author" | "\\authori"
-        | "\\authoriz" | "\\authoriza" | "\\authorizat" | "\\authorizati"
-        | "\\authorizatio" => "\\authorization",
-        "\\in" | "\\ins" | "\\inst" | "\\instr" | "\\instru" | "\\instruc"
-        | "\\instruct" | "\\instructi" | "\\instructio" => "\\instruction",
+        "\\au" | "\\aut" | "\\auth" | "\\autho" | "\\author" | "\\authori" | "\\authoriz"
+        | "\\authoriza" | "\\authorizat" | "\\authorizati" | "\\authorizatio" => "\\authorization",
+        "\\in" | "\\ins" | "\\inst" | "\\instr" | "\\instru" | "\\instruc" | "\\instruct"
+        | "\\instructi" | "\\instructio" => "\\instruction",
+        "\\b"
+        | "\\be"
+        | "\\beh"
+        | "\\beha"
+        | "\\behav"
+        | "\\behavi"
+        | "\\behavio"
+        | "\\behavior"
+        | "\\behaviora" => "\\behavioral",
         "\\co" | "\\con" | "\\conf" | "\\confi" => "\\config",
         _ => input,
     };
@@ -733,11 +763,17 @@ fn autocomplete_slash(input: &str) -> Option<String> {
     if normalized == "\\instruction" {
         return Some("\\instruction ".to_string());
     }
+    if normalized == "\\behavioral" {
+        return Some("\\behavioral ".to_string());
+    }
     if normalized == "\\config" {
         return Some("\\config ".to_string());
     }
 
-    let matches: Vec<&&str> = ALL_COMMANDS.iter().filter(|c| c.starts_with(normalized)).collect();
+    let matches: Vec<&&str> = ALL_COMMANDS
+        .iter()
+        .filter(|c| c.starts_with(normalized))
+        .collect();
     if matches.len() == 1 {
         Some(matches[0].to_string())
     } else if matches.len() > 1 {

@@ -395,6 +395,8 @@ Type `\` then press `↓` to browse all commands with arrow keys. Press `Esc` to
 | `\authorization edit` | Open authority.toml in `$EDITOR` |
 | `\instruction show` | Show `~/.arcana/INSTRUCTION.md` |
 | `\instruction edit` | Open INSTRUCTION.md in `$EDITOR` |
+| `\behavioral show` | Show `~/.arcana/BEHAVIORAL.md` |
+| `\behavioral edit` | Edit behavioral line in `$EDITOR` |
 
 ---
 
@@ -408,6 +410,36 @@ arcana config show    # Print current config
 arcana config edit    # Open in $EDITOR
 arcana config path    # Print file path
 ```
+
+---
+
+## System Prompt Architecture
+
+Arcana dispatches the system prompt based on the current agent mode:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Ask Mode           Agent Mode                           │
+│  ┌──────────┐       ┌───────────────────────────────┐   │
+│  │ Simple   │       │ 1. authorized_prompt.md        │   │
+│  │ research │       │    (structured authority.toml) │   │
+│  │ prompt   │       │ 2. INSTRUCTION.md              │   │
+│  └──────────┘       │    (pure AAS API reference)    │   │
+│                     │ 3. BEHAVIORAL.md                │   │
+│                     │    (user-editable "when to      │   │
+│                     │     call tools" directive)      │   │
+│                     └───────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+```
+
+| File | Purpose | Editable |
+|------|---------|----------|
+| `INSTRUCTION.md` | AAS API reference (JSON ops, conventions) | `\instruction edit` |
+| `BEHAVIORAL.md` | Behavioral line — tells LLM *when* to use tools | `\behavioral edit` |
+| `authority.toml` | Structured allow/deny lists (fed via `authorized_prompt.md`) | `\authorization edit` |
+
+Switch modes with `\mode` (↑↓ browse, Enter select). The system prompt
+refreshes immediately on mode change or config edit.
 
 ---
 

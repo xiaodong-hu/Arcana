@@ -441,6 +441,21 @@ Type `\` then press `↓` to browse all commands with arrow keys; press `Esc` to
 | `\authorization edit` | Open `~/.arcana/authority.toml` in `$EDITOR` |
 | `\instruction show` | Show `~/.arcana/INSTRUCTION.md` |
 | `\instruction edit` | Open `~/.arcana/INSTRUCTION.md` in `$EDITOR` |
+| `\behavioral show` | Show `~/.arcana/BEHAVIORAL.md` |
+| `\behavioral edit` | Edit behavioral line in `$EDITOR` |
+
+### 5.1 System Prompt Dispatch
+
+Arcana builds the LLM system prompt differently per agent mode:
+
+| Mode | System Prompt Contents |
+|------|----------------------|
+| **Ask** | Simple research prompt: *"You are a professional research assistant. Answer profoundly, pedagogically, and concisely."* |
+| **Agent** | Three layers: (1) `authorized_prompt.md` (structured `authority.toml`), (2) `INSTRUCTION.md` (pure AAS API reference), (3) `BEHAVIORAL.md` (user-editable directive telling the LLM *when* to call tools) |
+
+Switch modes with `\mode`; the system prompt refreshes immediately.
+Edit behavioral line with `\behavioral edit` to control how aggressively
+the agent uses tools without touching the API reference.
 
 ---
 
