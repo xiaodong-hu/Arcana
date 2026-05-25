@@ -476,13 +476,7 @@ impl Viewport {
 
                         // ── Shell: full panel with inline command, timing, result ──
                         if tc.tool_type == ToolType::Shell {
-                            let status = if tc.result.is_some() {
-                                format!("({:.1}s)", tc.duration_ms as f64 / 1000.0)
-                            } else {
-                                "(waiting)".to_string()
-                            };
-
-                            // Build the first line: heading + "Shell" + inline highlighted command + timing + hint
+                            // Build the first line: heading + "Shell" + inline highlighted command + hint
                             let mut first_spans: Vec<Span> = vec![
                                 Span::styled(
                                     heading,
@@ -490,15 +484,13 @@ impl Viewport {
                                         .fg(heading_color)
                                         .add_modifier(Modifier::BOLD),
                                 ),
-                                Span::styled(
-                                    "Shell ",
-                                    Style::default().fg(heading_color),
-                                ),
+                                Span::styled("Shell ", Style::default().fg(heading_color)),
                             ];
 
                             // Inline highlighted command (single-line; multiline → first line only)
                             let cmd_first_line = tc.description.lines().next().unwrap_or("");
-                            let cmd_spans = crate::highlight::highlight_lines(cmd_first_line, "bash");
+                            let cmd_spans =
+                                crate::highlight::highlight_lines(cmd_first_line, "bash");
                             if let Some(first_cmd) = cmd_spans.first() {
                                 for span in first_cmd {
                                     first_spans.push(Span::styled(
@@ -507,11 +499,6 @@ impl Viewport {
                                     ));
                                 }
                             }
-
-                            first_spans.push(Span::styled(
-                                format!(" {status} "),
-                                Style::default().fg(heading_color),
-                            ));
 
                             let hint = if tc.collapsed {
                                 "ctrl+x to expand"
