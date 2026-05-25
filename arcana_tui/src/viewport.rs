@@ -7,6 +7,7 @@ use crate::types::{Message, MessageRole, ThinkingBlock, ToolCall, ToolType};
 const TOOL_HINT: Color = Color::Rgb(160, 160, 170);
 const TOOL_OUTPUT: Color = Color::Rgb(185, 185, 195);
 const PIGMENT_GREEN: Color = Color::Rgb(0, 165, 80);
+const AMBER_SAE_ECE: Color = Color::Rgb(255, 126, 0);
 
 /// Viewport state: manages scroll position and message rendering.
 #[derive(Debug)]
@@ -387,18 +388,23 @@ impl Viewport {
                         } else {
                             "waiting".to_string()
                         };
+                        let (heading, heading_color) = if tc.tool_type == ToolType::Shell {
+                            ("[Arcana Run]: ", PIGMENT_GREEN)
+                        } else {
+                            ("[Arcana Request]: ", AMBER_SAE_ECE)
+                        };
                         if tc.collapsed {
                             lines.push((msg_idx, Line::from(vec![
-                                Span::styled("[Arcana Run]: ", Style::default().fg(PIGMENT_GREEN).add_modifier(Modifier::BOLD)),
-                                Span::styled(format!("{label} ({status}) "), Style::default().fg(PIGMENT_GREEN)),
+                                Span::styled(heading, Style::default().fg(heading_color).add_modifier(Modifier::BOLD)),
+                                Span::styled(format!("{label} ({status}) "), Style::default().fg(heading_color)),
                                 Span::styled("ctrl+x to expand", Style::default().fg(TOOL_HINT)),
                             ])));
                             continue;
                         }
 
                         lines.push((msg_idx, Line::from(vec![
-                            Span::styled("[Arcana Run]: ", Style::default().fg(PIGMENT_GREEN).add_modifier(Modifier::BOLD)),
-                            Span::styled(format!("{label} ({status}) "), Style::default().fg(PIGMENT_GREEN)),
+                            Span::styled(heading, Style::default().fg(heading_color).add_modifier(Modifier::BOLD)),
+                            Span::styled(format!("{label} ({status}) "), Style::default().fg(heading_color)),
                             Span::styled("ctrl+x to fold", Style::default().fg(TOOL_HINT)),
                         ])));
                         for line in render_tool_command_lines(tc, theme) {
