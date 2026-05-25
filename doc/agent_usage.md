@@ -475,8 +475,13 @@ the agent uses tools without touching the API reference.
 | `Ctrl+Shift+P` | Freeze & backup all agents |
 | `Ctrl+Shift+M` | Modify last prompt |
 | `Ctrl+/` | Toggle query overlay |
-| `Ctrl+Y` | Toggle terminal text selection mode for native copy/select |
+| `Ctrl+Y` | Toggle mouse capture for native text selection & copy (mouse selects, Ctrl+Shift+C copies) |
 | `Ctrl+X` | Toggle `[Arcana Run]` shell panel expand/collapse |
+
+> **Text selection:** `Ctrl+Y` releases the mouse back to the terminal so you can
+> select any visible text with the mouse and copy with `Ctrl+Shift+C` (or `Cmd+C`
+> on macOS). Press `Ctrl+Y` again to re-enable mouse scrolling. The TUI stays
+> fully visible throughout — you never leave Arcana.
 
 ### 6.2 Composer
 

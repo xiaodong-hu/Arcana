@@ -364,6 +364,7 @@ arcana resume --last            # Resume previous session
 | `Ctrl+b` | Stop LLM generation immediately |
 | `Ctrl+o` | Toggle thinking chain expand/collapse |
 | `Ctrl+x` | Toggle `[Arcana Run]` shell panel expand/collapse |
+| `Ctrl+y` | Toggle mouse capture — release mouse for native text selection & copy |
 | `Ctrl+j` / `Ctrl+k` | Scroll viewport down/up |
 | `Ctrl+Enter` | Newline in composer (also `Shift+Enter`) |
 | `Ctrl+w` | Delete word left |
@@ -372,6 +373,10 @@ arcana resume --last            # Resume previous session
 | `Home` / `End` | Start/end of current line |
 | `Tab` | Autocomplete command / insert spaces |
 | `Ctrl+c` | Interrupt / clear composer |
+
+> **Text selection:** `Ctrl+y` releases the mouse to the terminal for native
+> text selection — select with mouse, copy with `Ctrl+Shift+C`. Press `Ctrl+y`
+> again to restore mouse scrolling. The TUI stays visible throughout.
 
 ### TUI Commands (prefix: `\`)
 
