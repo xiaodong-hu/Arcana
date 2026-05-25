@@ -61,7 +61,10 @@ pub fn render_banner(frame: &mut Frame, area: Rect, theme: &Theme, status: &Stat
             0
         };
 
-        let span = Span::styled(*line, Style::default().fg(color).add_modifier(Modifier::BOLD));
+        let span = Span::styled(
+            *line,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        );
         let paragraph = Paragraph::new(Line::from(span)).alignment(Alignment::Center);
         let line_area = Rect::new(inner.x, inner.y + y as u16, inner.width, 1);
         frame.render_widget(paragraph, line_area);
@@ -80,17 +83,18 @@ pub fn render_banner(frame: &mut Frame, area: Rect, theme: &Theme, status: &Stat
     // Metadata lines
     let meta_y = tagline_y + 2;
     if meta_y < inner.height as usize {
-        let meta1 = format!(
-            "    Model:      {:<20} Session:    new",
-            status.model_name
-        );
+        let meta1 = format!("    Model:      {:<20} Session:    new", status.model_name);
         let meta2 = format!(
             "    Provider:   {:<20} Sub-agents: query + spawn",
             "deepseek"
         );
 
-        let m1 = Paragraph::new(meta1).style(theme.dim).alignment(Alignment::Center);
-        let m2 = Paragraph::new(meta2).style(theme.dim).alignment(Alignment::Center);
+        let m1 = Paragraph::new(meta1)
+            .style(theme.dim)
+            .alignment(Alignment::Center);
+        let m2 = Paragraph::new(meta2)
+            .style(theme.dim)
+            .alignment(Alignment::Center);
 
         let m1_area = Rect::new(inner.x, inner.y + meta_y as u16, inner.width, 1);
         let m2_area = Rect::new(inner.x, inner.y + (meta_y + 1) as u16, inner.width, 1);

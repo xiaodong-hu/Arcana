@@ -44,6 +44,14 @@ struct App {
     stream_handle: Option<tokio::task::JoinHandle<()>>,
     /// Exact shell commands approved by the human in this session.
     approved_commands: HashMap<String, ApprovedAuthorityRequest>,
+    /// Current agent operation mode (Ask vs Agent).
+    agent_mode: AgentMode,
+    /// Whether mode selection UI is active (triggered by \mode).
+    mode_selection_active: bool,
+    /// Index into ALL_MODES for the currently highlighted mode.
+    mode_selection_index: usize,
+    /// Whether terminal-native text selection is active (toggled by Ctrl+Y).
+    text_selection_active: bool,
 }
 
 impl App {
@@ -72,6 +80,10 @@ impl App {
             stream_started_at: None,
             stream_handle: None,
             approved_commands: HashMap::new(),
+            agent_mode: AgentMode::Agent,
+            mode_selection_active: false,
+            mode_selection_index: 0,
+            text_selection_active: false,
         }
     }
 
@@ -369,6 +381,7 @@ impl App {
             &self.skills,
             &self.agents,
             &self.tasks,
+            self.agent_mode,
         );
 
         self.viewport.render(frame, chunks[1], &self.theme);
@@ -381,8 +394,68 @@ impl App {
             self.overlay.render(frame, area, &self.theme);
         }
 
+        // --- Mode selection floating panel ---
+        if self.mode_selection_active {
+            render_mode_selection(frame, area, self.mode_selection_index, &self.theme);
+        }
+
         render_toasts(frame, area, &self.toasts);
     }
+}
+
+fn render_mode_selection(frame: &mut Frame, area: Rect, selected: usize, theme: &Theme) {
+    let panel_w = 52u16;
+    let panel_h = (ALL_MODES.len() as u16 + 4);
+    let x = area.width.saturating_sub(panel_w) / 2;
+    let y = area.height.saturating_sub(panel_h) / 2;
+    let panel_area = Rect::new(x, y, panel_w, panel_h);
+
+    // Clear background
+    frame.render_widget(ratatui::widgets::Clear, panel_area);
+
+    let block = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(180, 160, 60)))
+        .title(" Select Agent Mode ")
+        .title_style(
+            Style::default()
+                .fg(Color::Rgb(180, 160, 60))
+                .add_modifier(Modifier::BOLD),
+        );
+    frame.render_widget(block, panel_area);
+
+    let inner = panel_area.inner(ratatui::layout::Margin::new(1, 1));
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, mode) in ALL_MODES.iter().enumerate() {
+        let is_selected = i == selected;
+        let prefix = if is_selected { "❯ " } else { "  " };
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Rgb(180, 160, 60))
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Rgb(160, 160, 170))
+        };
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(mode.label(), style),
+            Span::raw("  "),
+            Span::styled(
+                mode.description(),
+                Style::default().fg(Color::Rgb(120, 120, 130)),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Enter select  ·  Esc cancel",
+        Style::default().fg(Color::Rgb(120, 120, 130)),
+    )));
+
+    let paragraph = ratatui::widgets::Paragraph::new(lines);
+    frame.render_widget(paragraph, inner);
 }
 
 fn render_toasts(frame: &mut Frame, area: Rect, toasts: &[Toast]) {
@@ -482,7 +555,7 @@ fn authority_socket_ready(socket_path: &Path) -> bool {
     socket_path.exists() && UnixStream::connect(socket_path).is_ok()
 }
 
-fn find_authority_binary() -> Option<PathBuf> {
+pub(crate) fn find_authority_binary() -> Option<PathBuf> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent()?;
     let candidates = [
@@ -535,7 +608,7 @@ pub async fn interactive(
 
     // Conversation history for LLM context
     let mut conversation: Vec<serde_json::Value> =
-        vec![serde_json::json!({"role": "system", "content": system_prompt_with_authority()})];
+        vec![serde_json::json!({"role": "system", "content": build_system_prompt(app.agent_mode)})];
 
     loop {
         tui.draw(|frame| app.render(frame))?;
@@ -544,6 +617,53 @@ pub async fn interactive(
             match evt {
                 AppEvent::Key(key) => {
                     let action = classify_key(&key);
+
+                    // --- Mode selection overlay (triggered by \mode) ---
+                    if app.mode_selection_active {
+                        match action {
+                            KeyAction::Up => {
+                                if app.mode_selection_index == 0 {
+                                    app.mode_selection_index = ALL_MODES.len() - 1;
+                                } else {
+                                    app.mode_selection_index -= 1;
+                                }
+                                continue;
+                            }
+                            KeyAction::Down => {
+                                if app.mode_selection_index + 1 >= ALL_MODES.len() {
+                                    app.mode_selection_index = 0;
+                                } else {
+                                    app.mode_selection_index += 1;
+                                }
+                                continue;
+                            }
+                            KeyAction::Enter => {
+                                let new_mode = ALL_MODES[app.mode_selection_index];
+                                app.agent_mode = new_mode;
+                                app.mode_selection_active = false;
+                                // Refresh system prompt in conversation
+                                conversation[0] = serde_json::json!({
+                                    "role": "system",
+                                    "content": build_system_prompt(app.agent_mode)
+                                });
+                                app.viewport.add_error_message(format!(
+                                    "Mode switched to: {} — {}",
+                                    new_mode.label(),
+                                    new_mode.description()
+                                ));
+                                continue;
+                            }
+                            KeyAction::Escape => {
+                                app.mode_selection_active = false;
+                                continue;
+                            }
+                            _ => {
+                                // Any other key dismisses the selection
+                                app.mode_selection_active = false;
+                            }
+                        }
+                    }
+
                     match app.mode {
                         ViewMode::Main => {
                             // --- Command selection mode (↑↓ browse, Esc exit) ---
@@ -597,6 +717,7 @@ pub async fn interactive(
                                             "Commands:\n\
   \\quit          Exit session\n\
   \\clear         Clear viewport\n\
+  \\mode          Switch agent mode (Ask / Agent)\n\
   \\status        Show model/token info\n\
   \\usage         Session token/cost stats\n\
   \\working_dir   Show current working directory\n\
@@ -609,6 +730,8 @@ pub async fn interactive(
   \\authorization edit     Open authority.toml in $EDITOR\n\
   \\instruction show       Show INSTRUCTION.md\n\
   \\instruction edit       Open INSTRUCTION.md in $EDITOR\n\
+  \\behavioral show        Show behavioral line\n\
+  \\behavioral edit        Edit behavioral line in $EDITOR\n\
 \n\
 Hotkeys:\n\
   Ctrl+e         Open $EDITOR for prompt\n\
@@ -626,6 +749,13 @@ Hotkeys:\n\
   Ctrl+c         Clear prompt"
                                                 .into(),
                                         );
+                                    }
+                                    "\\mode" => {
+                                        app.mode_selection_active = true;
+                                        app.mode_selection_index = ALL_MODES
+                                            .iter()
+                                            .position(|m| *m == app.agent_mode)
+                                            .unwrap_or(0);
                                     }
                                     "\\status" => {
                                         app.viewport.add_error_message(format!(
@@ -809,10 +939,48 @@ Hotkeys:\n\
                                         refresh_authorized_prompt_file();
                                         conversation[0] = serde_json::json!({
                                             "role": "system",
-                                            "content": system_prompt_with_authority()
+                                            "content": build_system_prompt(app.agent_mode)
                                         });
                                         app.viewport.add_error_message(format!(
                                             "Instruction reloaded from {}",
+                                            path.display()
+                                        ));
+                                    }
+                                    "\\behavioral" | "\\behavioral show" => {
+                                        match crate::behavioral::load_or_create() {
+                                            Ok(content) => {
+                                                let path = crate::behavioral::path()?;
+                                                app.viewport.add_error_message(format!(
+                                                    "Behavioral line file: {}\n\n{}",
+                                                    path.display(),
+                                                    content
+                                                ));
+                                            }
+                                            Err(e) => app.viewport.add_error_message(format!(
+                                                "Cannot load behavioral line: {e}"
+                                            )),
+                                        }
+                                    }
+                                    "\\behavioral edit" => {
+                                        let _ = crate::behavioral::load_or_create()?;
+                                        let path = crate::behavioral::path()?;
+                                        let editor = config.editor.command.clone();
+                                        event_handle.abort();
+                                        tui.suspend()?;
+                                        let _ =
+                                            std::process::Command::new(&editor).arg(&path).status();
+                                        tui.resume()?;
+                                        let (tx, rx, handle) = event::spawn_event_reader();
+                                        event_tx = tx;
+                                        events = rx;
+                                        event_handle = handle;
+
+                                        conversation[0] = serde_json::json!({
+                                            "role": "system",
+                                            "content": build_system_prompt(app.agent_mode)
+                                        });
+                                        app.viewport.add_error_message(format!(
+                                            "Behavioral line reloaded from {}",
                                             path.display()
                                         ));
                                     }
@@ -907,6 +1075,23 @@ Hotkeys:\n\
                                     app.viewport.add_separator();
                                 }
                                 app.show_banner = false;
+                            } else if action == KeyAction::ToggleSelectionMode {
+                                // Ctrl+Y: toggle terminal-native text selection.
+                                // Disables mouse capture so the terminal handles the mouse
+                                // for native selection & copy (Ctrl+Shift+C), while the TUI
+                                // stays fully visible. Press Ctrl+Y again to re-enable.
+                                app.text_selection_active = !app.text_selection_active;
+                                tui.set_mouse_capture(!app.text_selection_active)?;
+                                let msg = if app.text_selection_active {
+                                    "Text selection ON — use mouse to select, Ctrl+Shift+C to copy. Ctrl+Y to exit."
+                                } else {
+                                    "Text selection OFF"
+                                };
+                                app.toasts.push(Toast {
+                                    message: msg.into(),
+                                    detail: None,
+                                    created_at: chrono::Utc::now(),
+                                });
                             } else if action == KeyAction::OpenEditor {
                                 // Ctrl+e: open $EDITOR for prompt editing
                                 let editor = config.editor.command.clone();
@@ -975,6 +1160,7 @@ Hotkeys:\n\
                             }
                         }
                         ViewMode::DiffReview => {}
+                        ViewMode::ModeSelection => {}
                     }
                 }
                 AppEvent::Paste(text) => {
@@ -1093,38 +1279,58 @@ Hotkeys:\n\
                             {
                                 Some(approved) => approved,
                                 None => {
-                                    event_handle.abort();
-                                    tui.suspend()?;
-                                    let approval = approve_authority_request(request.clone())?;
-                                    tui.resume()?;
-                                    let (tx, rx, handle) = event::spawn_event_reader();
-                                    event_tx = tx;
-                                    events = rx;
-                                    event_handle = handle;
-
-                                    match approval {
-                                        AuthorityApproval::Approved(approved) => {
-                                            if let Some(key) =
-                                                authority_command_cache_key(&approved.request)
-                                            {
-                                                app.approved_commands.insert(key, approved.clone());
-                                            }
-                                            approved
+                                    // Auto-approve safe read-only operations without prompting
+                                    if is_safe_authority_request(&request) {
+                                        let details = authority_request_details(&request);
+                                        let safe = ApprovedAuthorityRequest {
+                                            request: confirmed_authority_request(request.clone()),
+                                            tool_type: details.tool_type,
+                                            description: details.target,
+                                            action: details.action.map(str::to_string),
+                                        };
+                                        if let Some(key) =
+                                            authority_command_cache_key(&safe.request)
+                                        {
+                                            app.approved_commands.insert(key, safe.clone());
                                         }
-                                        AuthorityApproval::Aborted {
-                                            response,
-                                            tool_type,
-                                            description,
-                                        } => {
-                                            app.viewport.add_tool_call(ToolCall {
+                                        safe
+                                    } else {
+                                        event_handle.abort();
+                                        tui.suspend()?;
+                                        let approval = approve_authority_request(request.clone())?;
+                                        tui.resume()?;
+                                        let (tx, rx, handle) = event::spawn_event_reader();
+                                        event_tx = tx;
+                                        events = rx;
+                                        event_handle = handle;
+
+                                        match approval {
+                                            AuthorityApproval::Approved(approved) => {
+                                                if let Some(key) =
+                                                    authority_command_cache_key(&approved.request)
+                                                {
+                                                    app.approved_commands
+                                                        .insert(key, approved.clone());
+                                                }
+                                                approved
+                                            }
+                                            AuthorityApproval::Aborted {
+                                                response,
                                                 tool_type,
                                                 description,
-                                                result: Some(response.to_string()),
-                                                duration_ms: 0,
-                                                collapsed: false,
-                                            });
-                                            responses.push(response);
-                                            continue;
+                                                action,
+                                            } => {
+                                                app.viewport.add_tool_call(ToolCall {
+                                                    tool_type,
+                                                    description,
+                                                    action,
+                                                    result: Some(response.to_string()),
+                                                    duration_ms: 0,
+                                                    collapsed: false,
+                                                });
+                                                responses.push(response);
+                                                continue;
+                                            }
                                         }
                                     }
                                 }
@@ -1133,6 +1339,7 @@ Hotkeys:\n\
                             app.viewport.add_tool_call(ToolCall {
                                 tool_type: approved.tool_type,
                                 description: approved.description.clone(),
+                                action: approved.action.clone(),
                                 result: None,
                                 duration_ms: 0,
                                 collapsed: false,
@@ -1340,7 +1547,7 @@ pub async fn single_shot(
     let thinking_config = &config.agents.main.thinking;
     let client = reqwest::Client::new();
     let mut messages = vec![
-        serde_json::json!({"role": "system", "content": system_prompt_with_authority()}),
+        serde_json::json!({"role": "system", "content": build_system_prompt(AgentMode::Agent)}),
         serde_json::json!({"role": "user", "content": user_content}),
     ];
     let mut last_usage = None;
@@ -1460,11 +1667,32 @@ async fn send_single_shot_chat(
     Ok(resp.json().await?)
 }
 
-fn system_prompt_with_authority() -> String {
-    let base: &str = "You are a helpful assistant.\n\nArcana-Agent AAS bridge: you cannot open the authority socket yourself. To call the Arcana Authority System, output one JSON object per line using the documented AAS API, with no markdown wrapper. Arcana-Agent will relay those JSON lines to AAS, return the JSON responses to you, and then you MUST continue from the returned results. Always try your best to use any available combination of AAS tools, commands, filesystem authority, and network authority that can materially improve the answer to the user's request. If AAS returns an aborted or denied response, report it and stop that operation.";
-    match fs::read_to_string(".arcana/authorized_prompt.md") {
-        Ok(prompt) => format!("{}\n\n{}", prompt.trim_end(), base),
-        Err(_) => base.to_string(),
+fn build_system_prompt(mode: AgentMode) -> String {
+    match mode {
+        AgentMode::Ask => "You are a professional research assistant. \
+             Answer profoundly, pedagogically, and concisely."
+            .to_string(),
+        AgentMode::Agent => {
+            // 1. Structured authority config (generated by AAS daemon)
+            let authority_config =
+                fs::read_to_string(".arcana/authorized_prompt.md").unwrap_or_default();
+
+            // 2. AAS API reference (pure, no behavioral instructions)
+            let instruction = crate::instruction::load_or_create().unwrap_or_default();
+
+            // 3. Behavioral line — tells the LLM when to use tools (user-editable)
+            let behavior = crate::behavioral::load_or_create().unwrap_or_default();
+
+            let mut parts: Vec<String> = Vec::new();
+            if !authority_config.trim().is_empty() {
+                parts.push(authority_config.trim().to_string());
+            }
+            if !instruction.trim().is_empty() {
+                parts.push(instruction.trim().to_string());
+            }
+            parts.push(behavior.trim().to_string());
+            parts.join("\n\n")
+        }
     }
 }
 
@@ -1520,6 +1748,7 @@ struct ApprovedAuthorityRequest {
     request: serde_json::Value,
     tool_type: ToolType,
     description: String,
+    action: Option<String>,
 }
 
 enum AuthorityApproval {
@@ -1528,6 +1757,7 @@ enum AuthorityApproval {
         response: serde_json::Value,
         tool_type: ToolType,
         description: String,
+        action: Option<String>,
     },
 }
 
@@ -1926,6 +2156,7 @@ fn approve_authority_request(
                 request: confirmed_authority_request(request),
                 tool_type: details.tool_type,
                 description: details.target,
+                action: details.action.map(str::to_string),
             }));
         }
 
@@ -1939,6 +2170,7 @@ fn approve_authority_request(
                     return Ok(aborted_authority_approval(
                         details.tool_type,
                         details.target,
+                        details.action,
                         details.abort_error_type,
                         format!("{} edit produced an empty request", details.kind),
                     ));
@@ -1947,6 +2179,7 @@ fn approve_authority_request(
                     return Ok(aborted_authority_approval(
                         details.tool_type,
                         details.target,
+                        details.action,
                         details.abort_error_type,
                         format!("{} edit failed: {e}", details.kind),
                     ));
@@ -1958,6 +2191,7 @@ fn approve_authority_request(
             return Ok(aborted_authority_approval(
                 details.tool_type,
                 details.target.clone(),
+                details.action,
                 details.abort_error_type,
                 format!("{} aborted by user: {}", details.kind, details.target),
             ));
@@ -1974,6 +2208,7 @@ struct AuthorityRequestDetails {
     kind: &'static str,
     verb: &'static str,
     target: String,
+    action: Option<&'static str>,
     tool_type: ToolType,
     abort_error_type: &'static str,
 }
@@ -1984,6 +2219,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Tool Call",
             verb: "run of",
             target: request["command"].as_str().unwrap_or("").to_string(),
+            action: None,
             tool_type: ToolType::Shell,
             abort_error_type: "ToolCallAbortError",
         },
@@ -1994,6 +2230,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
                 .map(|args| {
                     args.iter()
                         .filter_map(|arg| arg.as_str())
+                        .map(shell_display_arg)
                         .collect::<Vec<_>>()
                         .join(" ")
                 })
@@ -2006,6 +2243,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
                 } else {
                     format!("{cmd} {args}")
                 },
+                action: None,
                 tool_type: ToolType::Shell,
                 abort_error_type: "ToolCallAbortError",
             }
@@ -2014,6 +2252,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Web Access",
             verb: "web fetch/browse of",
             target: request["url"].as_str().unwrap_or("").to_string(),
+            action: Some("Fetch"),
             tool_type: ToolType::Web,
             abort_error_type: "WebAccessAbortError",
         },
@@ -2025,6 +2264,11 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
                 _ => "delete access of",
             },
             target: request["path"].as_str().unwrap_or("").to_string(),
+            action: match request["op"].as_str().unwrap_or("") {
+                "read" | "read_text" => Some("Read"),
+                "write" | "write_text" => Some("Write"),
+                _ => Some("Delete"),
+            },
             tool_type: ToolType::File,
             abort_error_type: "FileAccessAbortError",
         },
@@ -2036,6 +2280,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
                 request["src"].as_str().unwrap_or(""),
                 request["dst"].as_str().unwrap_or("")
             ),
+            action: Some("Rename"),
             tool_type: ToolType::File,
             abort_error_type: "FileAccessAbortError",
         },
@@ -2043,6 +2288,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Registration",
             verb: "registration of",
             target: request["pattern"].as_str().unwrap_or("").to_string(),
+            action: Some("Register"),
             tool_type: ToolType::Other,
             abort_error_type: "ToolRegistrationAbortError",
         },
@@ -2050,6 +2296,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Registration",
             verb: "registration of",
             target: request["domain"].as_str().unwrap_or("").to_string(),
+            action: Some("Register"),
             tool_type: ToolType::Web,
             abort_error_type: "WebAccessRegistrationAbortError",
         },
@@ -2057,6 +2304,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Registration",
             verb: "registration of",
             target: request["path"].as_str().unwrap_or("").to_string(),
+            action: Some("Register"),
             tool_type: ToolType::File,
             abort_error_type: "FileAccessRegistrationAbortError",
         },
@@ -2064,6 +2312,7 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Registration",
             verb: "registration of",
             target: request["path"].as_str().unwrap_or("").to_string(),
+            action: Some("Register"),
             tool_type: ToolType::Other,
             abort_error_type: "ToolRegistrationAbortError",
         },
@@ -2071,15 +2320,27 @@ fn authority_request_details(request: &serde_json::Value) -> AuthorityRequestDet
             kind: "Authority Request",
             verb: "request of",
             target: request.to_string(),
+            action: Some("Request"),
             tool_type: ToolType::Other,
             abort_error_type: "ToolCallAbortError",
         },
     }
 }
 
+fn shell_display_arg(arg: &str) -> String {
+    if arg.chars().all(|ch| {
+        ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ':' | '=' | '+')
+    }) {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\"'\"'"))
+    }
+}
+
 fn aborted_authority_approval(
     tool_type: ToolType,
     description: String,
+    action: Option<&'static str>,
     error_type: &'static str,
     message: String,
 ) -> AuthorityApproval {
@@ -2091,6 +2352,7 @@ fn aborted_authority_approval(
         }),
         tool_type,
         description,
+        action: action.map(str::to_string),
     }
 }
 
@@ -2115,6 +2377,112 @@ fn confirmed_authority_request(mut request: serde_json::Value) -> serde_json::Va
         }
     }
     request
+}
+
+/// Safe read-only commands that never need human confirmation.
+const SAFE_COMMANDS: &[&str] = &[
+    "echo",
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "find",
+    "locate",
+    "wc",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "awk",
+    "sed",
+    "file",
+    "stat",
+    "du",
+    "df",
+    "which",
+    "type",
+    "whereis",
+    "pwd",
+    "env",
+    "printenv",
+    "whoami",
+    "hostname",
+    "uname",
+    "date",
+    "cal",
+    "uptime",
+    "ps",
+    "top",
+    "git diff",
+    "git status",
+    "git log",
+    "git show",
+    "git branch",
+    "git tag",
+    "git remote",
+    "git stash list",
+    "tree",
+];
+
+/// Check whether an authority request can be auto-approved without human confirmation.
+fn is_safe_authority_request(request: &serde_json::Value) -> bool {
+    let op = request.get("op").and_then(|op| op.as_str()).unwrap_or("");
+
+    // Safe: read-only file operations within project workspace (not .arcana/, /etc, /proc)
+    if matches!(op, "read" | "read_text" | "query") {
+        if let Some(path) = request.get("path").and_then(|p| p.as_str()) {
+            if !path.contains(".arcana") && !path.starts_with("/etc") && !path.starts_with("/proc")
+            {
+                return true;
+            }
+        }
+    }
+
+    // Safe: well-known read-only shell commands
+    if op == "exec_shell" {
+        if let Some(command) = request.get("command").and_then(|c| c.as_str()) {
+            let first_line = command.lines().next().unwrap_or("").trim();
+            return SAFE_COMMANDS.iter().any(|safe| {
+                first_line == *safe
+                    || first_line.starts_with(&format!("{safe} "))
+                    || (safe.starts_with("git ") && first_line == *safe)
+            });
+        }
+    }
+
+    if op == "exec" {
+        let cmd = request.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+        return SAFE_COMMANDS.iter().any(|safe| {
+            cmd == *safe
+                || (safe.starts_with("git ") && cmd == "git" && {
+                    let args = request.get("args").and_then(|a| a.as_array());
+                    if let Some(args) = args {
+                        if let Some(sub) = args.first().and_then(|a| a.as_str()) {
+                            return matches!(
+                                sub,
+                                "diff"
+                                    | "status"
+                                    | "log"
+                                    | "show"
+                                    | "branch"
+                                    | "tag"
+                                    | "remote"
+                                    | "stash"
+                            );
+                        }
+                    }
+                    false
+                })
+        });
+    }
+
+    false
 }
 
 fn authority_command_cache_key(request: &serde_json::Value) -> Option<String> {
@@ -2184,6 +2552,7 @@ fn format_authority_tool_result(response: &serde_json::Value) -> String {
         Some("exec_result") => {
             let stdout = response["stdout"].as_str().unwrap_or("");
             let stderr = response["stderr"].as_str().unwrap_or("");
+            let diff = response["diff"].as_str().unwrap_or("");
             let mut out = String::new();
             if !stdout.is_empty() {
                 out.push_str(stdout.trim_end_matches('\n'));
@@ -2193,6 +2562,23 @@ fn format_authority_tool_result(response: &serde_json::Value) -> String {
                     out.push('\n');
                 }
                 out.push_str(stderr.trim_end_matches('\n'));
+            }
+            if !diff.trim().is_empty() {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str(diff.trim_end_matches('\n'));
+            }
+            out
+        }
+        Some("mutation") => {
+            let mut out = mutation_summary(response);
+            let diff = response["diff"].as_str().unwrap_or("");
+            if !diff.trim().is_empty() {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str(diff.trim_end_matches('\n'));
             }
             out
         }
@@ -2227,6 +2613,22 @@ fn format_authority_tool_result(response: &serde_json::Value) -> String {
         ),
         _ => response.to_string(),
     }
+}
+
+fn mutation_summary(response: &serde_json::Value) -> String {
+    let Some(records) = response["records"].as_array() else {
+        return String::new();
+    };
+    records
+        .iter()
+        .filter_map(|record| {
+            let seq = record["seq"].as_u64()?;
+            let op = record["op"].as_str().unwrap_or("mutation");
+            let path = record["path"].as_str().unwrap_or("<unknown>");
+            Some(format!("recorded #{seq}: {op} {path}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn authority_request(

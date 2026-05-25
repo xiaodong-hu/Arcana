@@ -8,6 +8,7 @@ const TOOL_HINT: Color = Color::Rgb(160, 160, 170);
 const TOOL_OUTPUT: Color = Color::Rgb(185, 185, 195);
 const PIGMENT_GREEN: Color = Color::Rgb(0, 165, 80);
 const AMBER_SAE_ECE: Color = Color::Rgb(255, 126, 0);
+const AWESOME_RED: Color = Color::Rgb(255, 33, 82);
 
 /// Viewport state: manages scroll position and message rendering.
 #[derive(Debug)]
@@ -369,28 +370,49 @@ impl Viewport {
         for (msg_idx, msg) in self.messages.iter().enumerate() {
             match msg.role {
                 MessageRole::User => {
+                    let bg = Style::default().bg(theme.composer_bg);
+                    let text_style = theme.composer_text;
+                    let fill_w = inner.width as usize;
                     let content_lines: Vec<&str> = msg.content.split('\n').collect();
                     for (i, line_text) in content_lines.iter().enumerate() {
-                        if i == 0 {
-                            lines.push((
-                                msg_idx,
-                                Line::from(vec![
-                                    Span::styled("❯ ", theme.prompt_glyph),
-                                    Span::styled(line_text.to_string(), theme.user_message),
-                                ]),
-                            ));
-                        } else if line_text.is_empty() {
-                            lines.push((msg_idx, Line::from("")));
+                        let prefix = if i == 0 { "❯ " } else { "  " };
+                        let prefix_style = if i == 0 {
+                            theme.prompt_glyph.bg(theme.composer_bg)
                         } else {
+                            bg
+                        };
+                        let text = if line_text.is_empty() && i > 0 {
+                            // empty continuation line → just background fill
+                            let pad = fill_w.saturating_sub(2); // "  "
                             lines.push((
                                 msg_idx,
                                 Line::from(vec![
-                                    Span::raw("  "),
-                                    Span::styled(line_text.to_string(), theme.user_message),
+                                    Span::styled("  ", bg),
+                                    Span::styled(" ".repeat(pad), bg),
                                 ]),
                             ));
+                            continue;
+                        } else {
+                            line_text.to_string()
+                        };
+                        let prefix_w = unicode_width::UnicodeWidthStr::width(prefix);
+                        let text_w = unicode_width::UnicodeWidthStr::width(text.as_str());
+                        let used_w = prefix_w + text_w;
+                        let pad = fill_w.saturating_sub(used_w);
+                        let mut spans = vec![
+                            Span::styled(prefix, prefix_style),
+                            Span::styled(text, text_style.bg(theme.composer_bg)),
+                        ];
+                        if pad > 0 {
+                            spans.push(Span::styled(" ".repeat(pad), bg));
                         }
+                        lines.push((msg_idx, Line::from(spans)));
                     }
+                    // Full-width background separator line after user message
+                    lines.push((
+                        msg_idx,
+                        Line::from(vec![Span::styled(" ".repeat(fill_w), bg)]),
+                    ));
                 }
                 MessageRole::Agent => {
                     // Render thinking blocks (collapsed by default, Ctrl+O to expand)
@@ -453,55 +475,65 @@ impl Viewport {
                             ("[Arcana Request]: ", AMBER_SAE_ECE)
                         };
 
-                        // ── Shell: full panel with expand/collapse, timing, result ──
+                        // ── Shell: full panel with inline command, timing, result ──
                         if tc.tool_type == ToolType::Shell {
-                            let status = if tc.result.is_some() {
-                                format!("finished in {:.1}s", tc.duration_ms as f64 / 1000.0)
-                            } else {
-                                "waiting".to_string()
-                            };
-                            if tc.collapsed {
-                                lines.push((
-                                    msg_idx,
-                                    Line::from(vec![
-                                        Span::styled(
-                                            heading,
-                                            Style::default()
-                                                .fg(heading_color)
-                                                .add_modifier(Modifier::BOLD),
-                                        ),
-                                        Span::styled(
-                                            format!("Shell ({status}) "),
-                                            Style::default().fg(heading_color),
-                                        ),
-                                        Span::styled(
-                                            "ctrl+x to expand",
-                                            Style::default().fg(TOOL_HINT),
-                                        ),
-                                    ]),
+                            let mut first_spans: Vec<Span> = vec![
+                                Span::styled(
+                                    heading,
+                                    Style::default()
+                                        .fg(heading_color)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    shell_tool_label(tc),
+                                    Style::default().fg(heading_color),
+                                ),
+                                Span::styled("`", Style::default().fg(heading_color)),
+                            ];
+
+                            let cmd_all_lines: Vec<&str> = tc.description.lines().collect();
+                            let cmd_first_line = cmd_all_lines.first().copied().unwrap_or("");
+                            push_shell_highlighted(&mut first_spans, cmd_first_line);
+                            if cmd_all_lines.len() > 1 {
+                                first_spans.push(Span::styled(
+                                    " ...` ",
+                                    Style::default().fg(heading_color),
                                 ));
+                            } else {
+                                first_spans
+                                    .push(Span::styled("` ", Style::default().fg(heading_color)));
+                            }
+
+                            let hint = if tc.collapsed {
+                                "ctrl+x to expand"
+                            } else {
+                                "ctrl+x to fold"
+                            };
+                            first_spans.push(Span::styled(hint, Style::default().fg(TOOL_HINT)));
+
+                            lines.push((msg_idx, Line::from(first_spans)));
+
+                            // Collapsed: just the first line, nothing below
+                            if tc.collapsed {
                                 continue;
                             }
 
-                            lines.push((
-                                msg_idx,
-                                Line::from(vec![
-                                    Span::styled(
-                                        heading,
-                                        Style::default()
-                                            .fg(heading_color)
-                                            .add_modifier(Modifier::BOLD),
-                                    ),
-                                    Span::styled(
-                                        format!("Shell ({status}) "),
-                                        Style::default().fg(heading_color),
-                                    ),
-                                    Span::styled("ctrl+x to fold", Style::default().fg(TOOL_HINT)),
-                                ]),
-                            ));
-                            for line in render_tool_command_lines(tc, theme) {
-                                lines.push((msg_idx, line));
+                            if cmd_all_lines.len() > 1 {
+                                for cmd_line in &cmd_all_lines[1..] {
+                                    let hl = crate::highlight::highlight_lines(cmd_line, "bash");
+                                    for spans in &hl {
+                                        let mut line_spans = vec![Span::raw("  ")];
+                                        for span in spans {
+                                            line_spans.push(Span::styled(
+                                                span.text.clone(),
+                                                Style::default().fg(span.fg),
+                                            ));
+                                        }
+                                        lines.push((msg_idx, Line::from(line_spans)));
+                                    }
+                                }
                             }
+
                             if let Some(result) = &tc.result {
                                 if !result.is_empty() {
                                     lines.push((msg_idx, Line::from("")));
@@ -523,29 +555,73 @@ impl Viewport {
                             continue;
                         }
 
-                        // ── Non-Shell: compact single line, no timing, no collapse ──
-                        let verb = match tc.tool_type {
-                            ToolType::File => "File Access to",
-                            ToolType::Web => "Web Access to",
-                            ToolType::Search => "Search for",
-                            _ => "Request for",
+                        // ── Non-Shell: compact single line with status appended ──
+                        let action = tc.action.as_deref().unwrap_or(match tc.tool_type {
+                            ToolType::File => "File",
+                            ToolType::Web => "Web",
+                            ToolType::Search => "Search",
+                            _ => "Request",
+                        });
+                        let object = match tc.tool_type {
+                            ToolType::File => "File",
+                            ToolType::Web => "Web",
+                            ToolType::Search => "Search",
+                            _ => "Authority",
                         };
-                        lines.push((
-                            msg_idx,
-                            Line::from(vec![
-                                Span::styled(
-                                    heading,
-                                    Style::default()
-                                        .fg(heading_color)
-                                        .add_modifier(Modifier::BOLD),
-                                ),
-                                Span::styled(
-                                    format!("{verb} `{}`", tc.description),
-                                    Style::default().fg(heading_color),
-                                ),
-                                Span::raw("."),
-                            ]),
-                        ));
+                        let suffix = match tc.tool_type {
+                            ToolType::Search => " for ",
+                            _ => " Access to ",
+                        };
+                        let status = tc.result.as_deref().and_then(compact_request_status);
+                        let mut request_spans = vec![
+                            Span::styled(
+                                heading,
+                                Style::default()
+                                    .fg(heading_color)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(format!("{object} "), Style::default().fg(heading_color)),
+                            Span::styled(
+                                action.to_string(),
+                                Style::default()
+                                    .fg(AWESOME_RED)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(suffix, Style::default().fg(heading_color)),
+                            Span::styled("`", Style::default().fg(heading_color)),
+                            Span::styled(
+                                tc.description.clone(),
+                                Style::default().fg(heading_color),
+                            ),
+                            Span::styled("`.", Style::default().fg(heading_color)),
+                        ];
+                        if let Some(status) = status {
+                            request_spans.push(Span::raw(" "));
+                            request_spans.push(Span::styled(
+                                status,
+                                Style::default()
+                                    .fg(Color::White)
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                        }
+                        lines.push((msg_idx, Line::from(request_spans)));
+                        if let Some(result) = &tc.result {
+                            if let Some(extra) = expanded_request_result(result) {
+                                for line in extra.lines() {
+                                    lines.push((
+                                        msg_idx,
+                                        Line::from(vec![
+                                            Span::raw("  "),
+                                            Span::styled(
+                                                line.to_string(),
+                                                Style::default().fg(TOOL_OUTPUT),
+                                            ),
+                                        ]),
+                                    ));
+                                }
+                                lines.push((msg_idx, Line::from("")));
+                            }
+                        }
                     }
 
                     // Render response content with markdown formatting
@@ -792,36 +868,92 @@ impl Viewport {
     }
 }
 
-fn render_tool_command_lines<'a>(tool_call: &ToolCall, theme: &Theme) -> Vec<Line<'a>> {
-    if tool_call.tool_type != ToolType::Shell {
-        return tool_call
-            .description
-            .lines()
-            .map(|line| {
-                Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(line.to_string(), theme.agent_response),
-                ])
-            })
-            .collect();
+fn shell_tool_label(tc: &ToolCall) -> String {
+    if tc.result.is_some() {
+        format!(
+            "Shell (finished in {:.1}s): ",
+            tc.duration_ms as f64 / 1000.0
+        )
+    } else {
+        "Shell: ".to_string()
+    }
+}
+
+fn push_shell_highlighted(spans: &mut Vec<Span>, command: &str) {
+    let highlighted = crate::highlight::highlight_lines(command, "bash");
+    if let Some(line) = highlighted.first() {
+        for span in line {
+            spans.push(Span::styled(
+                span.text.clone(),
+                Style::default().fg(span.fg),
+            ));
+        }
+    } else {
+        spans.push(Span::styled(command.to_string(), Style::default()));
+    }
+}
+
+fn compact_request_status(result: &str) -> Option<String> {
+    let trimmed = result.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return match json.get("status").and_then(|status| status.as_str()) {
+            Some("ok") | Some("mutation") | Some("fetched") | Some("content") | Some("text") => {
+                Some("OK".to_string())
+            }
+            Some("denied") => Some(format!(
+                "Denied: {}",
+                json.get("reason")
+                    .and_then(|reason| reason.as_str())
+                    .unwrap_or("unknown reason")
+            )),
+            Some("aborted") => Some(format!(
+                "Aborted: {}",
+                json.get("message")
+                    .and_then(|message| message.as_str())
+                    .unwrap_or("")
+            )),
+            _ => None,
+        };
     }
 
-    crate::highlight::highlight_lines(&tool_call.description, "bash")
-        .into_iter()
-        .map(|spans| {
-            let mut line_spans = vec![Span::raw("  ")];
-            if spans.is_empty() {
-                line_spans.push(Span::raw(""));
-            } else {
-                line_spans.extend(
-                    spans
-                        .into_iter()
-                        .map(|span| Span::styled(span.text, Style::default().fg(span.fg))),
-                );
-            }
-            Line::from(line_spans)
-        })
-        .collect()
+    if trimmed == "ok"
+        || trimmed.starts_with("recorded #")
+        || trimmed.starts_with("fetched:")
+        || trimmed.starts_with("content returned:")
+        || trimmed.starts_with("text returned:")
+    {
+        return Some("OK".to_string());
+    }
+    if let Some(reason) = trimmed.strip_prefix("denied:") {
+        return Some(format!("Denied:{}", reason));
+    }
+    if let Some(reason) = trimmed.strip_prefix("aborted:") {
+        return Some(format!("Aborted:{}", reason));
+    }
+    trimmed.lines().next().map(str::to_string)
+}
+
+fn expanded_request_result(result: &str) -> Option<&str> {
+    let trimmed = result.trim();
+    if trimmed.is_empty()
+        || trimmed == "ok"
+        || trimmed.starts_with("denied:")
+        || trimmed.starts_with("aborted:")
+        || trimmed.starts_with("fetched:")
+        || trimmed.starts_with("content returned:")
+        || trimmed.starts_with("text returned:")
+        || serde_json::from_str::<serde_json::Value>(trimmed).is_ok()
+    {
+        return None;
+    }
+    if trimmed.contains('\n') {
+        Some(trimmed)
+    } else {
+        None
+    }
 }
 
 /// Linearly interpolate between two RGB colors.

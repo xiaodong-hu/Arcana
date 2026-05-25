@@ -34,26 +34,31 @@ const HIGHLIGHT_NAMES: &[&str] = &[
 /// Map highlight index to foreground color.
 fn highlight_color(idx: usize) -> Color {
     match HIGHLIGHT_NAMES.get(idx) {
-        Some(&"keyword") => Color::Rgb(198, 120, 221),        // purple
+        Some(&"keyword") => Color::Rgb(198, 120, 221), // purple
         Some(&"string") | Some(&"string.special") => Color::Rgb(152, 195, 121), // green
-        Some(&"comment") => Color::Rgb(92, 99, 112),          // gray
+        Some(&"comment") => Color::Rgb(92, 99, 112),   // gray
         Some(&"function") | Some(&"function.builtin") => Color::Rgb(97, 175, 239), // blue
         Some(&"type") | Some(&"type.builtin") => Color::Rgb(229, 192, 123), // yellow
-        Some(&"number") | Some(&"constant") | Some(&"constant.builtin") => Color::Rgb(209, 154, 102), // orange
-        Some(&"operator") => Color::Rgb(86, 182, 194),        // cyan
+        Some(&"number") | Some(&"constant") | Some(&"constant.builtin") => {
+            Color::Rgb(209, 154, 102)
+        } // orange
+        Some(&"operator") => Color::Rgb(86, 182, 194), // cyan
         Some(&"variable.builtin") | Some(&"property.builtin") => Color::Rgb(224, 108, 117), // red
-        Some(&"variable") => Color::Rgb(224, 108, 117),       // red
+        Some(&"variable") => Color::Rgb(224, 108, 117), // red
         Some(&"variable.parameter") => Color::Rgb(171, 178, 191), // light gray
-        Some(&"attribute") => Color::Rgb(229, 192, 123),      // yellow
-        Some(&"constructor") => Color::Rgb(229, 192, 123),    // yellow
-        Some(&"module") => Color::Rgb(97, 175, 239),          // blue
-        Some(&"tag") => Color::Rgb(224, 108, 117),            // red
-        Some(&"property") => Color::Rgb(224, 108, 117),       // red
-        Some(&"punctuation") | Some(&"punctuation.bracket") | Some(&"punctuation.delimiter") | Some(&"punctuation.special") => {
+        Some(&"attribute") => Color::Rgb(229, 192, 123), // yellow
+        Some(&"constructor") => Color::Rgb(229, 192, 123), // yellow
+        Some(&"module") => Color::Rgb(97, 175, 239),   // blue
+        Some(&"tag") => Color::Rgb(224, 108, 117),     // red
+        Some(&"property") => Color::Rgb(224, 108, 117), // red
+        Some(&"punctuation")
+        | Some(&"punctuation.bracket")
+        | Some(&"punctuation.delimiter")
+        | Some(&"punctuation.special") => {
             Color::Rgb(171, 178, 191) // light gray
         }
-        Some(&"embedded") => Color::Rgb(198, 120, 221),       // purple
-        _ => Color::Rgb(171, 178, 191),                        // default: light gray
+        Some(&"embedded") => Color::Rgb(198, 120, 221), // purple
+        _ => Color::Rgb(171, 178, 191),                 // default: light gray
     }
 }
 
@@ -100,56 +105,64 @@ fn build_config(lang: &str) -> Option<HighlightConfiguration> {
             tree_sitter_rust::HIGHLIGHTS_QUERY,
             tree_sitter_rust::INJECTIONS_QUERY,
             "",
-        ).ok()?,
+        )
+        .ok()?,
         "python" => HighlightConfiguration::new(
             tree_sitter_python::LANGUAGE.into(),
             "python",
             tree_sitter_python::HIGHLIGHTS_QUERY,
             "",
             "",
-        ).ok()?,
+        )
+        .ok()?,
         "javascript" => HighlightConfiguration::new(
             tree_sitter_javascript::LANGUAGE.into(),
             "javascript",
             tree_sitter_javascript::HIGHLIGHT_QUERY,
             tree_sitter_javascript::INJECTIONS_QUERY,
             tree_sitter_javascript::LOCALS_QUERY,
-        ).ok()?,
+        )
+        .ok()?,
         "typescript" => HighlightConfiguration::new(
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             "typescript",
             tree_sitter_typescript::HIGHLIGHTS_QUERY,
             tree_sitter_typescript::LOCALS_QUERY,
             "",
-        ).ok()?,
+        )
+        .ok()?,
         "tsx" => HighlightConfiguration::new(
             tree_sitter_typescript::LANGUAGE_TSX.into(),
             "tsx",
             tree_sitter_typescript::HIGHLIGHTS_QUERY,
             tree_sitter_typescript::LOCALS_QUERY,
             "",
-        ).ok()?,
+        )
+        .ok()?,
         "toml" => HighlightConfiguration::new(
             tree_sitter_toml_ng::LANGUAGE.into(),
             "toml",
             tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
             "",
             "",
-        ).ok()?,
+        )
+        .ok()?,
         "json" => HighlightConfiguration::new(
             tree_sitter_json::LANGUAGE.into(),
             "json",
             tree_sitter_json::HIGHLIGHTS_QUERY,
             "",
             "",
-        ).ok()?,
+        )
+        .ok()?,
         "bash" => HighlightConfiguration::new(
             tree_sitter_bash::LANGUAGE.into(),
             "bash",
             tree_sitter_bash::HIGHLIGHT_QUERY,
             "",
             "",
-        ).ok()?,
+        )
+        .ok()?,
         _ => return None,
     };
     config.configure(HIGHLIGHT_NAMES);
@@ -213,11 +226,17 @@ pub fn highlight_lines(source: &str, lang: &str) -> Vec<Vec<StyledSpan>> {
 }
 
 fn plain_lines(source: &str, fg: Color) -> Vec<Vec<StyledSpan>> {
-    source.split('\n').map(|line| {
-        if line.is_empty() {
-            Vec::new()
-        } else {
-            vec![StyledSpan { text: line.to_string(), fg }]
-        }
-    }).collect()
+    source
+        .split('\n')
+        .map(|line| {
+            if line.is_empty() {
+                Vec::new()
+            } else {
+                vec![StyledSpan {
+                    text: line.to_string(),
+                    fg,
+                }]
+            }
+        })
+        .collect()
 }

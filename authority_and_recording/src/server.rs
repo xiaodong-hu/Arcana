@@ -2,13 +2,13 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
 
 use sha2::{Digest, Sha256};
 
 use crate::authority::{Approval, Authority};
 use crate::prompt;
-use crate::record::Record;
+use crate::record::{MutationReport, Record};
 use crate::types::{AccessLevel, AuthorityErrorType, Request, Response, RuleVerdict};
 
 pub struct Server {
@@ -231,14 +231,12 @@ impl Server {
 
     fn write_bytes_authorized(&mut self, path: &str, content: &[u8]) -> io::Result<Response> {
         let full_path = self.authority.resolve(path);
-        let prev_blob = self.record.hash_file(&full_path)?;
-        let blob = self.record.store_blob(content)?;
-        self.record
-            .append("write", path, Some(blob), prev_blob, None)?;
-
-        // Atomic write: tmp → fsync → rename
-        atomic_write(&self.tmp_dir, &full_path, &content)?;
-        Ok(Response::Ok)
+        let tmp_dir = self.tmp_dir.clone();
+        self.with_recorded_mutations(|_| {
+            // Atomic write: tmp → fsync → rename
+            atomic_write(&tmp_dir, &full_path, content)?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_delete(&mut self, path: &str) -> io::Result<Response> {
@@ -257,12 +255,12 @@ impl Server {
 
     fn delete_authorized(&mut self, path: &str) -> io::Result<Response> {
         let full_path = self.authority.resolve(path);
-        let prev_blob = self.record.hash_file(&full_path)?;
-        self.record.append("delete", path, None, prev_blob, None)?;
-        if full_path.exists() {
-            fs::remove_file(&full_path)?;
-        }
-        Ok(Response::Ok)
+        self.with_recorded_mutations(|_| {
+            if full_path.exists() {
+                fs::remove_file(&full_path)?;
+            }
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_rename(&mut self, src: &str, dst: &str) -> io::Result<Response> {
@@ -282,14 +280,13 @@ impl Server {
     fn rename_authorized(&mut self, src: &str, dst: &str) -> io::Result<Response> {
         let src_path = self.authority.resolve(src);
         let dst_path = self.authority.resolve(dst);
-        let prev_blob = self.record.hash_file(&src_path)?;
-        self.record
-            .append("rename", src, None, prev_blob, Some(dst.to_string()))?;
-        if let Some(parent) = dst_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::rename(&src_path, &dst_path)?;
-        Ok(Response::Ok)
+        self.with_recorded_mutations(|_| {
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::rename(&src_path, &dst_path)?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_query(&self, path: &str) -> Response {
@@ -384,7 +381,7 @@ impl Server {
         })
     }
 
-    fn handle_exec(&self, cmd: &str, args: &[String]) -> io::Result<Response> {
+    fn handle_exec(&mut self, cmd: &str, args: &[String]) -> io::Result<Response> {
         let allowed = match self.authority.check_tool(cmd, args) {
             RuleVerdict::Allow => true,
             RuleVerdict::Deny => false,
@@ -420,39 +417,32 @@ impl Server {
             });
         }
 
-        let output = Command::new(cmd)
-            .args(args)
-            .current_dir(self.authority.project_root())
-            .output()?;
-
-        let code = output.status.code().unwrap_or(-1);
-        Ok(Response::ExecResult {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            code,
+        let project_root = self.authority.project_root().to_path_buf();
+        self.exec_with_recording(|| {
+            Command::new(cmd)
+                .args(args)
+                .current_dir(&project_root)
+                .output()
         })
     }
 
-    fn handle_exec_confirmed(&self, cmd: &str, args: &[String]) -> io::Result<Response> {
+    fn handle_exec_confirmed(&mut self, cmd: &str, args: &[String]) -> io::Result<Response> {
         if let RuleVerdict::Deny = self.authority.check_tool(cmd, args) {
             return Ok(Response::Denied {
                 reason: "command not allowed".into(),
             });
         }
 
-        let output = Command::new(cmd)
-            .args(args)
-            .current_dir(self.authority.project_root())
-            .output()?;
-
-        Ok(Response::ExecResult {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            code: output.status.code().unwrap_or(-1),
+        let project_root = self.authority.project_root().to_path_buf();
+        self.exec_with_recording(|| {
+            Command::new(cmd)
+                .args(args)
+                .current_dir(&project_root)
+                .output()
         })
     }
 
-    fn handle_exec_shell(&self, command: &str) -> io::Result<Response> {
+    fn handle_exec_shell(&mut self, command: &str) -> io::Result<Response> {
         let command = match self.authority.editable_approval(
             "Tool Call",
             command,
@@ -470,20 +460,17 @@ impl Server {
             }
         };
 
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&command)
-            .current_dir(self.authority.project_root())
-            .output()?;
-
-        Ok(Response::ExecResult {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            code: output.status.code().unwrap_or(-1),
+        let project_root = self.authority.project_root().to_path_buf();
+        self.exec_with_recording(|| {
+            Command::new("sh")
+                .arg("-c")
+                .arg(&command)
+                .current_dir(&project_root)
+                .output()
         })
     }
 
-    fn handle_exec_shell_confirmed(&self, command: &str) -> io::Result<Response> {
+    fn handle_exec_shell_confirmed(&mut self, command: &str) -> io::Result<Response> {
         let args = vec!["-c".to_string(), command.to_string()];
         if let RuleVerdict::Deny = self.authority.check_tool("sh", &args) {
             return Ok(Response::Denied {
@@ -491,16 +478,13 @@ impl Server {
             });
         }
 
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .current_dir(self.authority.project_root())
-            .output()?;
-
-        Ok(Response::ExecResult {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            code: output.status.code().unwrap_or(-1),
+        let project_root = self.authority.project_root().to_path_buf();
+        self.exec_with_recording(|| {
+            Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .current_dir(&project_root)
+                .output()
         })
     }
 
@@ -538,10 +522,12 @@ impl Server {
                 });
             }
         };
-        self.authority.register_tool_runtime(name);
-        self.authority.register_command(&approved_pattern)?;
-        self.regenerate_prompt()?;
-        Ok(Response::Ok)
+        self.with_recorded_mutations(|srv| {
+            srv.authority.register_tool_runtime(name);
+            srv.authority.register_command(&approved_pattern)?;
+            srv.regenerate_prompt()?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_register_tool_confirmed(
@@ -561,19 +547,21 @@ impl Server {
         } else {
             format!("{} {}", path, args.join(" "))
         };
-        self.authority.register_tool_runtime(name);
-        self.authority.register_command(&command_pattern)?;
-        self.regenerate_prompt()?;
-        Ok(Response::Ok)
+        self.with_recorded_mutations(|srv| {
+            srv.authority.register_tool_runtime(name);
+            srv.authority.register_command(&command_pattern)?;
+            srv.regenerate_prompt()?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_register_command(&mut self, pattern: &str) -> io::Result<Response> {
-        match self.authority.editable_approval(
+        let approved_pattern = match self.authority.editable_approval(
             "Tool Registration",
             pattern,
             AuthorityErrorType::ToolRegistrationAbortError,
         ) {
-            Approval::Approved(pattern) => self.authority.register_command(&pattern)?,
+            Approval::Approved(pattern) => pattern,
             Approval::Aborted {
                 error_type,
                 message,
@@ -583,24 +571,29 @@ impl Server {
                     message,
                 });
             }
-        }
-        self.regenerate_prompt()?;
-        Ok(Response::Ok)
+        };
+        self.with_recorded_mutations(|srv| {
+            srv.authority.register_command(&approved_pattern)?;
+            srv.regenerate_prompt()?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_register_command_confirmed(&mut self, pattern: &str) -> io::Result<Response> {
-        self.authority.register_command(pattern)?;
-        self.regenerate_prompt()?;
-        Ok(Response::Ok)
+        self.with_recorded_mutations(|srv| {
+            srv.authority.register_command(pattern)?;
+            srv.regenerate_prompt()?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_register_web(&mut self, domain: &str) -> io::Result<Response> {
-        match self.authority.editable_approval(
+        let approved_domain = match self.authority.editable_approval(
             "Web Access Registration",
             domain,
             AuthorityErrorType::WebAccessRegistrationAbortError,
         ) {
-            Approval::Approved(domain) => self.authority.register_web(&domain)?,
+            Approval::Approved(domain) => domain,
             Approval::Aborted {
                 error_type,
                 message,
@@ -610,15 +603,20 @@ impl Server {
                     message,
                 });
             }
-        }
-        self.regenerate_prompt()?;
-        Ok(Response::Ok)
+        };
+        self.with_recorded_mutations(|srv| {
+            srv.authority.register_web(&approved_domain)?;
+            srv.regenerate_prompt()?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_register_web_confirmed(&mut self, domain: &str) -> io::Result<Response> {
-        self.authority.register_web(domain)?;
-        self.regenerate_prompt()?;
-        Ok(Response::Ok)
+        self.with_recorded_mutations(|srv| {
+            srv.authority.register_web(domain)?;
+            srv.regenerate_prompt()?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_register_filesystem(
@@ -626,12 +624,12 @@ impl Server {
         access: crate::types::FilesystemAccess,
         path: &str,
     ) -> io::Result<Response> {
-        match self.authority.editable_approval(
+        let approved_path = match self.authority.editable_approval(
             "File Access Registration",
             path,
             AuthorityErrorType::FileAccessRegistrationAbortError,
         ) {
-            Approval::Approved(path) => self.authority.register_filesystem(access, &path)?,
+            Approval::Approved(path) => path,
             Approval::Aborted {
                 error_type,
                 message,
@@ -641,9 +639,12 @@ impl Server {
                     message,
                 });
             }
-        }
-        self.regenerate_prompt()?;
-        Ok(Response::Ok)
+        };
+        self.with_recorded_mutations(|srv| {
+            srv.authority.register_filesystem(access, &approved_path)?;
+            srv.regenerate_prompt()?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_register_filesystem_confirmed(
@@ -651,9 +652,11 @@ impl Server {
         access: crate::types::FilesystemAccess,
         path: &str,
     ) -> io::Result<Response> {
-        self.authority.register_filesystem(access, path)?;
-        self.regenerate_prompt()?;
-        Ok(Response::Ok)
+        self.with_recorded_mutations(|srv| {
+            srv.authority.register_filesystem(access, path)?;
+            srv.regenerate_prompt()?;
+            Ok(Response::Ok)
+        })
     }
 
     fn handle_prompt(&self) -> io::Result<Response> {
@@ -702,6 +705,35 @@ impl Server {
         let content = prompt::generate_prompt(&self.authority)?;
         fs::write(&self.prompt_path, &content)
     }
+
+    fn with_recorded_mutations<F>(&mut self, action: F) -> io::Result<Response>
+    where
+        F: FnOnce(&mut Self) -> io::Result<Response>,
+    {
+        let before = self.record.scan_project_tree()?;
+        let response = action(self)?;
+        let after = self.record.scan_project_tree()?;
+        let report = self.record.record_project_delta(before, after)?;
+        Ok(attach_mutation_report(response, report))
+    }
+
+    fn exec_with_recording<F>(&mut self, run: F) -> io::Result<Response>
+    where
+        F: FnOnce() -> io::Result<Output>,
+    {
+        let before = self.record.scan_project_tree()?;
+        let output = run()?;
+        let after = self.record.scan_project_tree()?;
+        let report = self.record.record_project_delta(before, after)?;
+
+        Ok(Response::ExecResult {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            code: output.status.code().unwrap_or(-1),
+            records: report.records,
+            diff: report.diff,
+        })
+    }
 }
 
 impl Drop for Server {
@@ -738,6 +770,31 @@ fn send(writer: &mut impl Write, resp: &Response) -> io::Result<()> {
     let json = serde_json::to_string(resp).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     writeln!(writer, "{}", json)?;
     writer.flush()
+}
+
+fn attach_mutation_report(response: Response, report: MutationReport) -> Response {
+    if report.records.is_empty() {
+        return response;
+    }
+    match response {
+        Response::Ok => Response::Mutation {
+            records: report.records,
+            diff: report.diff,
+        },
+        Response::ExecResult {
+            stdout,
+            stderr,
+            code,
+            ..
+        } => Response::ExecResult {
+            stdout,
+            stderr,
+            code,
+            records: report.records,
+            diff: report.diff,
+        },
+        other => other,
+    }
 }
 
 fn extract_domain(url: &str) -> Option<String> {

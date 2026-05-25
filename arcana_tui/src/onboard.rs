@@ -128,7 +128,10 @@ fn resolve_api_key(
     }
 
     if non_interactive {
-        eprintln!("  ⚠ No API key found in {}. Set it before using Arcana.", env_var);
+        eprintln!(
+            "  ⚠ No API key found in {}. Set it before using Arcana.",
+            env_var
+        );
         return Ok(None);
     }
 

@@ -58,7 +58,9 @@ impl Default for DiffPanel {
 }
 
 impl DiffPanel {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Show the diff panel with a unified diff string.
     pub fn show_diff(&mut self, file_path: String, diff_text: &str) {
@@ -68,36 +70,50 @@ impl DiffPanel {
         self.action = None;
 
         // Parse diff lines
-        let raw_lines: Vec<(DiffKind, &str)> = diff_text.lines().map(|l| {
-            let kind = if l.starts_with("+++") || l.starts_with("---") || l.starts_with("@@") {
-                DiffKind::Header
-            } else if l.starts_with('+') {
-                DiffKind::Added
-            } else if l.starts_with('-') {
-                DiffKind::Removed
-            } else {
-                DiffKind::Context
-            };
-            (kind, l)
-        }).collect();
+        let raw_lines: Vec<(DiffKind, &str)> = diff_text
+            .lines()
+            .map(|l| {
+                let kind = if l.starts_with("+++") || l.starts_with("---") || l.starts_with("@@") {
+                    DiffKind::Header
+                } else if l.starts_with('+') {
+                    DiffKind::Added
+                } else if l.starts_with('-') {
+                    DiffKind::Removed
+                } else {
+                    DiffKind::Context
+                };
+                (kind, l)
+            })
+            .collect();
 
         // Reconstruct source code (strip diff prefix) for highlighting
         let lang = highlight::detect_language(&file_path).unwrap_or("");
-        let source: String = raw_lines.iter().map(|(kind, line)| {
-            let stripped = match kind {
-                DiffKind::Header => *line,
-                DiffKind::Added | DiffKind::Removed => line.get(1..).unwrap_or(""),
-                DiffKind::Context => line.get(1..).unwrap_or(line),
-            };
-            format!("{}\n", stripped)
-        }).collect();
+        let source: String = raw_lines
+            .iter()
+            .map(|(kind, line)| {
+                let stripped = match kind {
+                    DiffKind::Header => *line,
+                    DiffKind::Added | DiffKind::Removed => line.get(1..).unwrap_or(""),
+                    DiffKind::Context => line.get(1..).unwrap_or(line),
+                };
+                format!("{}\n", stripped)
+            })
+            .collect();
 
         let highlighted = highlight::highlight_lines(&source, lang);
 
-        self.lines = raw_lines.iter().enumerate().map(|(i, (kind, line))| {
-            let spans = highlighted.get(i).cloned().unwrap_or_default();
-            DiffLine { kind: *kind, content: line.to_string(), spans }
-        }).collect();
+        self.lines = raw_lines
+            .iter()
+            .enumerate()
+            .map(|(i, (kind, line))| {
+                let spans = highlighted.get(i).cloned().unwrap_or_default();
+                DiffLine {
+                    kind: *kind,
+                    content: line.to_string(),
+                    spans,
+                }
+            })
+            .collect();
 
         self.file_path = file_path;
     }
@@ -111,8 +127,12 @@ impl DiffPanel {
         self.scroll = (self.scroll + n).min(max);
     }
 
-    pub fn select_prev(&mut self) { self.selected = self.selected.saturating_sub(1); }
-    pub fn select_next(&mut self) { self.selected = (self.selected + 1).min(2); }
+    pub fn select_prev(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+    pub fn select_next(&mut self) {
+        self.selected = (self.selected + 1).min(2);
+    }
 
     pub fn confirm(&mut self) {
         self.action = Some(match self.selected {
@@ -130,7 +150,9 @@ impl DiffPanel {
 
     /// Render the diff review panel (full screen overlay).
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        if !self.visible { return; }
+        if !self.visible {
+            return;
+        }
 
         frame.render_widget(Clear, area);
 
@@ -147,7 +169,9 @@ impl DiffPanel {
         let footer_y = inner.y + inner.height.saturating_sub(2);
 
         // Render syntax-highlighted diff lines
-        let visible_lines: Vec<Line> = self.lines.iter()
+        let visible_lines: Vec<Line> = self
+            .lines
+            .iter()
             .skip(self.scroll)
             .take(diff_height)
             .map(|dl| {
@@ -159,8 +183,12 @@ impl DiffPanel {
                 };
 
                 let prefix = match dl.kind {
-                    DiffKind::Added => Span::styled("+", Style::default().fg(Color::Green).bg(bg).bold()),
-                    DiffKind::Removed => Span::styled("-", Style::default().fg(Color::Red).bg(bg).bold()),
+                    DiffKind::Added => {
+                        Span::styled("+", Style::default().fg(Color::Green).bg(bg).bold())
+                    }
+                    DiffKind::Removed => {
+                        Span::styled("-", Style::default().fg(Color::Red).bg(bg).bold())
+                    }
                     DiffKind::Header => Span::styled("", Style::default()),
                     DiffKind::Context => Span::styled(" ", Style::default().bg(bg)),
                 };
@@ -168,7 +196,8 @@ impl DiffPanel {
                 if dl.kind == DiffKind::Header {
                     // Headers: just cyan bold, no syntax highlight
                     return Line::from(Span::styled(
-                        &dl.content, Style::default().fg(Color::Cyan).bg(bg).bold()
+                        &dl.content,
+                        Style::default().fg(Color::Cyan).bg(bg).bold(),
                     ));
                 }
 
@@ -176,10 +205,16 @@ impl DiffPanel {
                 if dl.spans.is_empty() {
                     // Fallback: plain text
                     let text = dl.content.get(1..).unwrap_or(&dl.content);
-                    spans.push(Span::styled(text.to_string(), Style::default().fg(Color::White).bg(bg)));
+                    spans.push(Span::styled(
+                        text.to_string(),
+                        Style::default().fg(Color::White).bg(bg),
+                    ));
                 } else {
                     for s in &dl.spans {
-                        spans.push(Span::styled(s.text.clone(), Style::default().fg(s.fg).bg(bg)));
+                        spans.push(Span::styled(
+                            s.text.clone(),
+                            Style::default().fg(s.fg).bg(bg),
+                        ));
                     }
                 }
                 Line::from(spans)
@@ -192,7 +227,11 @@ impl DiffPanel {
 
         // Footer
         let total = self.lines.len();
-        let pct = if total > 0 { (self.scroll * 100) / total.max(1) } else { 0 };
+        let pct = if total > 0 {
+            (self.scroll * 100) / total.max(1)
+        } else {
+            0
+        };
         let scroll_info = format!(" {}/{} ({}%) ", self.scroll + 1, total, pct);
 
         let options = ["Accept", "Edit in $EDITOR", "Reject"];
@@ -205,7 +244,9 @@ impl DiffPanel {
             };
             footer_spans.push(Span::styled(prefix, style));
             footer_spans.push(Span::styled(*opt, style));
-            if i < 2 { footer_spans.push(Span::styled("  │  ", Style::default().fg(LIGHT_GRAY))); }
+            if i < 2 {
+                footer_spans.push(Span::styled("  │  ", Style::default().fg(LIGHT_GRAY)));
+            }
         }
         footer_spans.push(Span::styled(scroll_info, Style::default().fg(LIGHT_GRAY)));
 

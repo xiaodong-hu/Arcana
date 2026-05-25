@@ -1,6 +1,7 @@
 mod app;
 mod approval;
 mod banner;
+mod behavioral;
 mod cli;
 mod composer;
 mod config;
@@ -67,9 +68,12 @@ async fn main() {
     let result = match cli.command {
         Some(Command::Onboard(args)) => onboard::run(args).await,
         Some(Command::Resume(args)) => app::resume(args).await,
-        Some(Command::Recover(args)) => {
-            eprintln!("Recovery delegates to authority_and_record binary.");
-            eprintln!("Run: authority_and_record recover {:?}", args.project);
+        Some(Command::Recover(_)) => Err(
+            "`arcana recover` was removed. Use `arcana recovery --list`, then `arcana recovery --to-sequence <N>`.".into()
+        ),
+        Some(Command::Recovery(args)) => recovery_project(args),
+        Some(Command::Completions(args)) => {
+            print_completion_script(&args.shell);
             Ok(())
         }
         Some(Command::Check) => check::run().await,
@@ -104,6 +108,134 @@ async fn main() {
         process::exit(1);
     }
 }
+
+fn recovery_project(args: cli::RecoveryArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let project = args
+        .project
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    if args.list {
+        let binary = app::find_authority_binary()
+            .ok_or("cannot find authority_and_recording binary; build it before recovery")?;
+        let status = std::process::Command::new(binary)
+            .arg("recovery")
+            .arg(&project)
+            .arg("--list")
+            .status()?;
+        if !status.success() {
+            return Err(format!("authority recovery list exited with status {status}").into());
+        }
+        return Ok(());
+    }
+    if args.to_sequence.is_none() {
+        return Err("recovery requires `--list` or `--to-sequence <N>`".into());
+    }
+    if !args.yes && !confirm_recovery_warning(&project, args.to_sequence) {
+        return Err("recovery aborted".into());
+    }
+    let binary = app::find_authority_binary()
+        .ok_or("cannot find authority_and_recording binary; build it before recovery")?;
+    let mut command = std::process::Command::new(binary);
+    command.arg("recovery").arg(&project);
+    if let Some(seq) = args.to_sequence {
+        command.arg("--to-sequence").arg(seq.to_string());
+    }
+    command.arg("--yes");
+    let status = command.status()?;
+    if !status.success() {
+        return Err(format!("authority recovery exited with status {status}").into());
+    }
+    Ok(())
+}
+
+fn confirm_recovery_warning(project: &Path, target: Option<u64>) -> bool {
+    eprintln!();
+    eprintln!("╔════════════════════════════════════════════════════════════════════╗");
+    eprintln!("║ WARNING: Arcana recovery will overwrite the working tree.         ║");
+    eprintln!("║ Files may be rewritten or removed to match the recorded state.    ║");
+    eprintln!("║ The recovery itself is recorded, but unrecorded edits may be lost.║");
+    eprintln!("╚════════════════════════════════════════════════════════════════════╝");
+    eprintln!("Project: {}", project.display());
+    match target {
+        Some(seq) => eprintln!("Target record sequence: {seq}"),
+        None => eprintln!("Target record sequence: previous sequence"),
+    }
+    eprint!("Continue recovery? [y/yes to continue]: ");
+    io::stderr().flush().ok();
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    matches!(input.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+fn print_completion_script(shell: &str) {
+    match shell {
+        "bash" => print!("{}", BASH_COMPLETIONS),
+        "zsh" => print!("{}", ZSH_COMPLETIONS),
+        "fish" => print!("{}", FISH_COMPLETIONS),
+        other => {
+            eprintln!("[Arcana] Unsupported shell `{other}`. Use: bash, zsh, fish.");
+            process::exit(1);
+        }
+    }
+}
+
+const BASH_COMPLETIONS: &str = r#"_arcana()
+{
+    local cur prev
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    case "$prev" in
+        --model|--provider|--query|-q|recovery|resume|completions)
+            return
+            ;;
+        --to-sequence)
+            return
+            ;;
+    esac
+    case "$cur" in
+        --*) COMPREPLY=( $(compgen -W "--query --model --provider --accessible --reset --factory --help --version --list --to-sequence --yes" -- "$cur") );;
+        *) COMPREPLY=( $(compgen -W "--query -q --model --provider --accessible --reset --factory --help -h --version -V onboard resume recovery completions check version session auth config" -- "$cur") );;
+    esac
+}
+complete -F _arcana arcana
+"#;
+
+const ZSH_COMPLETIONS: &str = r#"#compdef arcana
+_arcana() {
+  local -a commands opts recover_opts shells
+  commands=(onboard resume recovery completions check version session auth config)
+  opts=(--query -q --model --provider --accessible --reset --factory --help -h --version -V)
+  recovery_opts=(--list --to-sequence --yes -y --help -h)
+  shells=(bash zsh fish)
+  if (( CURRENT > 2 )) && [[ ${words[2]} == recovery ]]; then
+    _describe 'recovery options' recovery_opts
+  elif (( CURRENT > 2 )) && [[ ${words[2]} == completions ]]; then
+    _describe 'shells' shells
+  else
+    _describe 'commands' commands
+    _describe 'options' opts
+  fi
+}
+_arcana "$@"
+"#;
+
+const FISH_COMPLETIONS: &str = r#"complete -c arcana -f
+complete -c arcana -s q -l query -d 'Single-shot query'
+complete -c arcana -l model -d 'Override model'
+complete -c arcana -l provider -d 'Override provider'
+complete -c arcana -l accessible -d 'Accessibility mode'
+complete -c arcana -l reset -d 'Reset project workspace'
+complete -c arcana -l factory -d 'Reset global workspace with --reset'
+complete -c arcana -l help -s h -d 'Show help'
+complete -c arcana -l version -s V -d 'Show version'
+complete -c arcana -n '__fish_use_subcommand' -a 'onboard resume recovery completions check version session auth config'
+complete -c arcana -n '__fish_seen_subcommand_from recovery' -l list -d 'List recorded mutations'
+complete -c arcana -n '__fish_seen_subcommand_from recovery' -l to-sequence -d 'Recover to record sequence'
+complete -c arcana -n '__fish_seen_subcommand_from recovery' -l yes -s y -d 'Skip recovery confirmation'
+complete -c arcana -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish'
+"#;
 
 // ---------------------------------------------------------------------------
 // Project path resolution with interactive confirmation

@@ -42,7 +42,12 @@ pub fn render_task_panel(
     let pad = (area.width as usize).saturating_sub(header_left.len() + toggle_hint.len() + 1);
 
     lines.push(Line::from(vec![
-        Span::styled(&header_left, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            &header_left,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" ".repeat(pad)),
         Span::styled(toggle_hint, Style::default().fg(LIGHT_GRAY)),
     ]));

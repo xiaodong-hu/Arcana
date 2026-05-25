@@ -81,7 +81,7 @@ Every existing coding agent is a **stateless parrot** — it forgets everything 
 
 ### 1. Rust-Hosted Strict Authority & Recording System
 
-Every file mutation and system command is gated and recorded. Full git-like history of agent actions. **The agent cannot ruin your project** — every change is recoverable.
+Every privileged operation is gated by AAS. File writes, deletes, renames, authority registrations, and any project-tree changes caused by approved shell commands are recorded by comparing the project tree before and after the operation. Each recorded mutation returns a git-compatible diff for review. **The agent cannot silently overwrite your project** — every recorded change is recoverable from `.arcana/git_record`.
 
 ```
 .arcana/git_record/
@@ -91,7 +91,7 @@ Every file mutation and system command is gated and recorded. Full git-like hist
 └── HEAD              # Current sequence number
 ```
 
-Recover any state: `arcana recover . --to-seq 42`
+Inspect recorded mutations before recovering: `arcana recovery --list`. Recover any recorded state, even after project files were deleted as long as `.arcana/git_record` remains: `arcana recovery --to-sequence 42`
 
 #### Command Authorization
 
@@ -364,6 +364,7 @@ arcana resume --last            # Resume previous session
 | `Ctrl+b` | Stop LLM generation immediately |
 | `Ctrl+o` | Toggle thinking chain expand/collapse |
 | `Ctrl+x` | Toggle `[Arcana Run]` shell panel expand/collapse |
+| `Ctrl+y` | Toggle mouse capture — release mouse for native text selection & copy |
 | `Ctrl+j` / `Ctrl+k` | Scroll viewport down/up |
 | `Ctrl+Enter` | Newline in composer (also `Shift+Enter`) |
 | `Ctrl+w` | Delete word left |
@@ -372,6 +373,10 @@ arcana resume --last            # Resume previous session
 | `Home` / `End` | Start/end of current line |
 | `Tab` | Autocomplete command / insert spaces |
 | `Ctrl+c` | Interrupt / clear composer |
+
+> **Text selection:** `Ctrl+y` releases the mouse to the terminal for native
+> text selection — select with mouse, copy with `Ctrl+Shift+C`. Press `Ctrl+y`
+> again to restore mouse scrolling. The TUI stays visible throughout.
 
 ### TUI Commands (prefix: `\`)
 
@@ -382,6 +387,7 @@ Type `\` then press `↓` to browse all commands with arrow keys. Press `Esc` to
 | `\quit` | Exit session |
 | `\help` | Show all commands and hotkeys |
 | `\clear` | Clear viewport |
+| `\mode` | Switch agent mode (Ask / Agent) |
 | `\status` | Show model/token info |
 | `\usage` | Session token/cost statistics |
 | `\working_dir` | Show current working directory |
@@ -394,9 +400,12 @@ Type `\` then press `↓` to browse all commands with arrow keys. Press `Esc` to
 | `\authorization edit` | Open authority.toml in `$EDITOR` |
 | `\instruction show` | Show `~/.arcana/INSTRUCTION.md` |
 | `\instruction edit` | Open INSTRUCTION.md in `$EDITOR` |
-| `\help` | Show all commands and hotkeys |
+| `\behavioral show` | Show `~/.arcana/BEHAVIORAL.md` |
+| `\behavioral edit` | Edit behavioral line in `$EDITOR` |
 
 ---
+
+Shell startup completions are available with `arcana completions bash`, `arcana completions zsh`, or `arcana completions fish`.
 
 ## Configuration
 
@@ -408,6 +417,36 @@ arcana config show    # Print current config
 arcana config edit    # Open in $EDITOR
 arcana config path    # Print file path
 ```
+
+---
+
+## System Prompt Architecture
+
+Arcana dispatches the system prompt based on the current agent mode:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Ask Mode           Agent Mode                           │
+│  ┌──────────┐       ┌───────────────────────────────┐   │
+│  │ Simple   │       │ 1. authorized_prompt.md        │   │
+│  │ research │       │    (structured authority.toml) │   │
+│  │ prompt   │       │ 2. INSTRUCTION.md              │   │
+│  └──────────┘       │    (pure AAS API reference)    │   │
+│                     │ 3. BEHAVIORAL.md                │   │
+│                     │    (user-editable "when to      │   │
+│                     │     call tools" directive)      │   │
+│                     └───────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+```
+
+| File | Purpose | Editable |
+|------|---------|----------|
+| `INSTRUCTION.md` | AAS API reference (JSON ops, conventions) | `\instruction edit` |
+| `BEHAVIORAL.md` | Behavioral line — tells LLM *when* to use tools | `\behavioral edit` |
+| `authority.toml` | Structured allow/deny lists (fed via `authorized_prompt.md`) | `\authorization edit` |
+
+Switch modes with `\mode` (↑↓ browse, Enter select). The system prompt
+refreshes immediately on mode change or config edit.
 
 ---
 
@@ -475,8 +514,8 @@ Arcana-Agent/
 - [ ] **Skills daemon** — trigger-based skill loading, hot-reload, manifest parsing
 - [ ] **Memory system** — knowledge DB, semantic search, error patterns, session recall
 - [ ] **Embedding model download** — `arcana onboard` does not yet download `all-MiniLM-L6-v2.onnx`
-- [ ] **Authority & recording** — permission gate, git-like mutation recording, crash recovery (prompt generation implemented)
-- [ ] **`arcana recover`** — restore project state from `git_record`
+- [x] **Authority & recording** — permission gate, git-like mutation recording, command-delta recording, and diff reporting
+- [x] **`arcana recovery`** — inspect and restore project state from `git_record`
 - [ ] **Tool calls** — shell execution, file read/write, search, web fetch (IPC protocol implemented)
 - [ ] **Diff review panel** — interactive accept/reject of file mutations
 - [ ] **OpenAI / Anthropic provider support** — only DeepSeek is wired up

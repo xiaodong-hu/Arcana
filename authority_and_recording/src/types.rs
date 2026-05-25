@@ -100,6 +100,16 @@ pub enum Response {
         stdout: String,
         stderr: String,
         code: i32,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        records: Vec<MutationRecord>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        diff: String,
+    },
+    #[serde(rename = "mutation")]
+    Mutation {
+        records: Vec<MutationRecord>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        diff: String,
     },
     #[serde(rename = "instruction")]
     Instruction { content: String },
@@ -227,6 +237,13 @@ pub struct AuthoritySnapshot {
 pub struct AuthorityConfigSources {
     pub system_toml: Option<String>,
     pub project_toml: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MutationRecord {
+    pub seq: u64,
+    pub op: String,
+    pub path: String,
 }
 
 // === Action Record ===

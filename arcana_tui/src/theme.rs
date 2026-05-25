@@ -15,6 +15,8 @@ pub struct Theme {
     pub diff_context: Style,
     pub status_bar_bg: Color,
     pub prompt_glyph: Style,
+    pub composer_bg: Color,
+    pub composer_text: Style,
     pub overlay_border: Color,
     pub dim: Style,
     pub system_message: Style,
@@ -45,6 +47,8 @@ impl Theme {
             prompt_glyph: Style::default()
                 .fg(Color::Rgb(0, 166, 79)) // pigment green
                 .add_modifier(Modifier::BOLD),
+            composer_bg: Color::Rgb(16, 12, 8), // smoky black #100C08
+            composer_text: Style::default().fg(Color::White),
             overlay_border: Color::Rgb(0, 212, 255),
             dim: Style::default().fg(Color::Rgb(140, 140, 160)),
             system_message: Style::default()
@@ -57,10 +61,7 @@ impl Theme {
     pub fn light() -> Self {
         Self {
             name: "light".into(),
-            banner_gradient: (
-                Color::Rgb(90, 30, 150),
-                Color::Rgb(0, 120, 200),
-            ),
+            banner_gradient: (Color::Rgb(90, 30, 150), Color::Rgb(0, 120, 200)),
             user_message: Style::default()
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
@@ -77,6 +78,8 @@ impl Theme {
             prompt_glyph: Style::default()
                 .fg(Color::Rgb(90, 30, 150))
                 .add_modifier(Modifier::BOLD),
+            composer_bg: Color::Rgb(240, 240, 245), // light smoky
+            composer_text: Style::default().fg(Color::Black),
             overlay_border: Color::Rgb(0, 120, 200),
             dim: Style::default().fg(Color::Gray),
             system_message: Style::default()
