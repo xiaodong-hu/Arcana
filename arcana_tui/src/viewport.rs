@@ -8,8 +8,6 @@ const TOOL_HINT: Color = Color::Rgb(160, 160, 170);
 const TOOL_OUTPUT: Color = Color::Rgb(185, 185, 195);
 const PIGMENT_GREEN: Color = Color::Rgb(0, 165, 80);
 const AMBER_SAE_ECE: Color = Color::Rgb(255, 126, 0);
-const AWESOME_RED: Color = Color::Rgb(255, 33, 82);
-const BU_RED: Color = Color::Rgb(204, 0, 0); // Boston University Red
 const DIFF_ADDED_BG: Color = Color::Rgb(0, 55, 30); // dark green bg for added lines
 const DIFF_REMOVED_BG: Color = Color::Rgb(70, 10, 10); // dark red bg for removed lines
 
@@ -36,6 +34,8 @@ pub struct Viewport {
     pub diff_collapsed: bool,
     /// Last rendered visual line count, used to keep manual-scroll views stable as content grows.
     last_total_lines: usize,
+    /// Cached fully wrapped visual lines. Scroll-only renders reuse this cache.
+    render_cache: RenderCache,
 }
 
 #[derive(Debug)]
@@ -43,6 +43,13 @@ pub struct StreamingThink {
     pub content: String,
     pub token_count: usize,
     pub start_time: std::time::Instant,
+}
+
+#[derive(Debug, Default)]
+struct RenderCache {
+    valid: bool,
+    width: u16,
+    lines: Vec<(usize, Line<'static>)>,
 }
 
 impl Default for Viewport {
@@ -58,6 +65,7 @@ impl Default for Viewport {
             tool_calls_collapsed: false,
             diff_collapsed: true,
             last_total_lines: 0,
+            render_cache: RenderCache::default(),
         }
     }
 }
@@ -67,9 +75,14 @@ impl Viewport {
         Self::default()
     }
 
+    fn invalidate_render_cache(&mut self) {
+        self.render_cache.valid = false;
+    }
+
     /// Append a token to the current streaming response.
     pub fn append_token(&mut self, token: &str) {
         self.streaming_text.push_str(token);
+        self.invalidate_render_cache();
         if self.auto_scroll {
             self.scroll_offset = 0;
         }
@@ -116,6 +129,7 @@ impl Viewport {
             tool_calls: Vec::new(),
             separator: None,
         });
+        self.invalidate_render_cache();
     }
 
     /// Start a thinking block.
@@ -125,6 +139,7 @@ impl Viewport {
             token_count: 0,
             start_time: std::time::Instant::now(),
         });
+        self.invalidate_render_cache();
     }
 
     /// Append a token to the current thinking block.
@@ -133,6 +148,7 @@ impl Viewport {
             think.content.push_str(token);
             think.token_count += 1;
         }
+        self.invalidate_render_cache();
     }
 
     /// End the current thinking block (collapse it).
@@ -193,6 +209,7 @@ impl Viewport {
             });
         }
         self.is_streaming = false;
+        self.invalidate_render_cache();
         // Don't force auto_scroll — user may be reading above
         // auto_scroll re-engages when user scrolls back to bottom
     }
@@ -206,6 +223,7 @@ impl Viewport {
             }
         }
         self.scroll_offset = 0;
+        self.invalidate_render_cache();
     }
 
     /// Toggle all Shell tool-call panels expand/collapse + diff truncation (Ctrl+X).
@@ -220,6 +238,7 @@ impl Viewport {
             }
         }
         self.scroll_offset = 0;
+        self.invalidate_render_cache();
     }
 
     /// Attach a tool-call panel to the most recent agent response.
@@ -236,6 +255,7 @@ impl Viewport {
         {
             msg.tool_calls.push(tool_call);
         }
+        self.invalidate_render_cache();
         if self.auto_scroll {
             self.scroll_offset = 0;
         }
@@ -254,6 +274,7 @@ impl Viewport {
             tc.result = Some(result);
             tc.duration_ms = duration_ms;
         }
+        self.invalidate_render_cache();
         if self.auto_scroll {
             self.scroll_offset = 0;
         }
@@ -265,6 +286,7 @@ impl Viewport {
         if user_msg_idx + 1 < self.messages.len() {
             if let Some(ref mut t) = self.messages[user_msg_idx + 1].thinking {
                 t.collapsed = !t.collapsed;
+                self.invalidate_render_cache();
             }
         }
     }
@@ -298,6 +320,7 @@ impl Viewport {
         });
         self.auto_scroll = true;
         self.scroll_offset = 0;
+        self.invalidate_render_cache();
     }
 
     /// Add an error message (displayed as system message).
@@ -312,6 +335,7 @@ impl Viewport {
         });
         self.auto_scroll = true;
         self.scroll_offset = 0;
+        self.invalidate_render_cache();
     }
 
     /// Add a horizontal separator line (full dialogue boundary).
@@ -324,6 +348,7 @@ impl Viewport {
             tool_calls: Vec::new(),
             separator: Some(crate::types::SeparatorKind::Full),
         });
+        self.invalidate_render_cache();
     }
 
     /// Add a sub-separator for within-dialogue breaks (dark gray).
@@ -336,6 +361,7 @@ impl Viewport {
             tool_calls: Vec::new(),
             separator: Some(crate::types::SeparatorKind::Partial),
         });
+        self.invalidate_render_cache();
     }
 
     /// Scroll up by N lines.
@@ -369,6 +395,12 @@ impl Viewport {
         let block = Block::default().borders(Borders::NONE);
         let inner = block.inner(area);
         frame.render_widget(block, area);
+
+        let panel_width = inner.width;
+        if self.render_cache.valid && self.render_cache.width == panel_width {
+            self.render_cached_lines(frame, inner);
+            return;
+        }
 
         // Build rendered lines from messages
         let mut lines: Vec<(usize, Line)> = Vec::new();
@@ -873,7 +905,14 @@ impl Viewport {
                 }
             }
         }
-        let lines = wrapped;
+        self.render_cache.width = inner.width;
+        self.render_cache.lines = wrapped;
+        self.render_cache.valid = true;
+        self.render_cached_lines(frame, inner);
+    }
+
+    fn render_cached_lines(&mut self, frame: &mut Frame, inner: Rect) {
+        let lines = &self.render_cache.lines;
 
         // --- Auto-scroll algorithm ---
         // 1. Determine cursor position (line index in `lines`)
@@ -934,10 +973,10 @@ impl Viewport {
         };
 
         let visible_lines: Vec<Line> = lines
-            .into_iter()
+            .iter()
             .skip(start_line)
             .take(visible_height)
-            .map(|(_, line)| line)
+            .map(|(_, line)| line.clone())
             .collect();
 
         let paragraph = Paragraph::new(visible_lines);

@@ -98,11 +98,14 @@ Inspect recorded mutations before recovering: `arcana recovery --list`. Recover 
 ```toml
 # ~/.arcana/authority.toml — editable before or after onboard
 [commands]
-allow = [
-    "cargo build", "cargo test", "cargo clippy", "cargo fmt",
+safe = [
     "git status", "git diff", "git log",
     "ls", "cat", "find", "grep", "rg",
-    "curl", "wget", "w3m", "python3", "node",
+    "head", "tail", "wc", "sort", "uniq", "tree",
+]
+allow = [
+    "cargo build", "cargo test", "cargo clippy", "cargo fmt",
+    "python3", "node",
 ]
 
 confirm = ["git push", "git commit", "rm -rf", "sudo *"]
@@ -125,6 +128,13 @@ deny = ["~/.ssh", "~/.gnupg", "~/.arcana/authority.toml"]
 ```
 
 Runtime management: `\authorization list|add|remove|edit`
+
+`[commands.safe]` is the no-confirmation pool for read-only commands such as
+`ls` and `cat`. These commands still execute through AAS; they simply skip the
+human confirmation panel. `[commands.allow]` remains the broader AAS permission
+pool; Arcana-Agent may still ask before running those commands. Project file
+reads are also no-confirmation by default for paths inside the current
+workspace, except project `.arcana/`.
 
 #### LLM Authority Instruction
 
