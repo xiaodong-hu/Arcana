@@ -1406,6 +1406,109 @@ Hotkeys:\n\
                                     "reason": "AAS bridge failed: .arcana/authority.sock not found"
                                 })
                             };
+
+                            // Two-phase write review: show diff + Accept/Edit/Reject
+                            let response = if response.get("status").and_then(|s| s.as_str()) == Some("review") {
+                                let diff = response["diff"].as_str().unwrap_or("");
+                                let path = response["path"].as_str().unwrap_or("");
+                                let proposed = response["proposed"].as_str().unwrap_or("");
+
+                                // Mark write access tool call as OK
+                                app.viewport.finish_latest_tool_call(
+                                    "OK.".to_string(),
+                                    started_at.elapsed().as_millis() as u64,
+                                );
+
+                                // New tool call for the change review
+                                app.viewport.add_tool_call(ToolCall {
+                                    tool_type: ToolType::File,
+                                    description: path.to_string(),
+                                    action: Some("Change".to_string()),
+                                    result: None,
+                                    duration_ms: 0,
+                                    collapsed: false,
+                                });
+                                app.viewport.finish_latest_tool_call(
+                                    diff.to_string(),
+                                    0,
+                                );
+                                tui.draw(|frame| app.render(frame))?;
+
+                                // Inline review confirmation (appends prompt to change tool call)
+                                let review_result = tui_review_write(
+                                    &mut app, &mut tui, path, proposed,
+                                )?;
+
+                                // Update change tool call with decision
+                                let decision = match &review_result {
+                                    WriteReviewResult::Accept => "Allowed.",
+                                    WriteReviewResult::Edit(_) => "Edited.",
+                                    WriteReviewResult::Reject => "Rejected.",
+                                };
+                                app.viewport.finish_latest_tool_call(
+                                    decision.to_string(),
+                                    0,
+                                );
+
+                                match review_result {
+                                    WriteReviewResult::Accept => {
+                                        let apply_req = serde_json::json!({
+                                            "op": "write_apply",
+                                            "path": approved.description,
+                                            "content": proposed
+                                        });
+                                        match authority_request(socket_path, apply_req) {
+                                            Ok(resp) => resp,
+                                            Err(e) => serde_json::json!({
+                                                "status": "denied",
+                                                "reason": format!("apply failed: {e}")
+                                            }),
+                                        }
+                                    }
+                                    WriteReviewResult::Edit(edited) => {
+                                        let edit_req = serde_json::json!({
+                                            "op": "write_text_confirmed",
+                                            "path": approved.description,
+                                            "content": edited
+                                        });
+                                        match authority_request(socket_path, edit_req) {
+                                            Ok(resp) => {
+                                                if resp.get("status").and_then(|s| s.as_str()) == Some("review") {
+                                                    // Auto-apply edited version
+                                                    let apply_req = serde_json::json!({
+                                                        "op": "write_apply",
+                                                        "path": approved.description,
+                                                        "content": edited
+                                                    });
+                                                    authority_request(socket_path, apply_req)
+                                                        .unwrap_or(resp)
+                                                } else {
+                                                    resp
+                                                }
+                                            }
+                                            Err(e) => serde_json::json!({
+                                                "status": "denied",
+                                                "reason": format!("edit failed: {e}")
+                                            }),
+                                        }
+                                    }
+                                    WriteReviewResult::Reject => {
+                                        let abort_req = serde_json::json!({
+                                            "op": "write_abort",
+                                            "path": approved.description
+                                        });
+                                        let _ = authority_request(socket_path, abort_req);
+                                        serde_json::json!({
+                                            "status": "aborted",
+                                            "error_type": "FileAccessAbortError",
+                                            "message": "write rejected by user during review"
+                                        })
+                                    }
+                                }
+                            } else {
+                                response
+                            };
+
                             app.viewport.finish_latest_tool_call(
                                 format_authority_tool_result(&response),
                                 started_at.elapsed().as_millis() as u64,
@@ -2187,6 +2290,119 @@ fn decode_html_entities(text: &str) -> String {
         .replace("&copy;", "©")
         .replace("&reg;", "®")
         .replace("&trade;", "™")
+}
+
+enum WriteReviewResult {
+    Accept,
+    Edit(String),
+    Reject,
+}
+
+/// Inline diff review: append confirmation prompt to the latest (change) tool call,
+/// wait for Accept/Edit/Reject while keeping scroll/Ctrl+Y/Ctrl+P functional.
+fn tui_review_write(
+    app: &mut App,
+    tui: &mut Tui,
+    _path: &str,
+    proposed: &str,
+) -> Result<WriteReviewResult, Box<dyn std::error::Error>> {
+    // Append confirmation prompt to the change review tool call
+    if let Some(msg) = app.viewport.messages.iter_mut().rev()
+        .find(|m| m.role == MessageRole::Agent)
+    {
+        if let Some(tc) = msg.tool_calls.last_mut() {
+            if let Some(ref mut result) = tc.result {
+                *result = format!(
+                    "{}\n\nAllow for Change?  Yes [y/Enter]  |  Edit [e]  |  Reject [n]",
+                    result
+                );
+            }
+        }
+    }
+    tui.draw(|frame| app.render(frame))?;
+
+    // Spawn temporary key reader
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = tokio::spawn(async move {
+        let mut reader = crossterm::event::EventStream::new();
+        use futures::StreamExt;
+        loop {
+            if let Some(Ok(evt)) = reader.next().await {
+                if tx.send(evt).is_err() { break; }
+            }
+        }
+    });
+
+    let result = loop {
+        let evt = tokio::task::block_in_place(|| rx.blocking_recv());
+        match evt {
+            Some(crossterm::event::Event::Key(key)) => {
+                if key.kind == crossterm::event::KeyEventKind::Release { continue; }
+                let action = classify_key(&key);
+
+                match action {
+                    KeyAction::Char('y') | KeyAction::Enter => break WriteReviewResult::Accept,
+                    KeyAction::Char('n') | KeyAction::Escape => break WriteReviewResult::Reject,
+                    KeyAction::Char('e') => {
+                        handle.abort();
+                        tui.suspend()?;
+                        let tmp = std::env::temp_dir().join("arcana_review_edit");
+                        std::fs::write(&tmp, proposed)?;
+                        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+                        let _ = std::process::Command::new(&editor).arg(&tmp).status();
+                        let edited = std::fs::read_to_string(&tmp).unwrap_or_default();
+                        let _ = std::fs::remove_file(&tmp);
+                        tui.resume()?;
+                        if edited.trim().is_empty() || edited.trim() == proposed.trim() {
+                            break WriteReviewResult::Reject;
+                        }
+                        break WriteReviewResult::Edit(edited.trim().to_string());
+                    }
+                    // Scroll
+                    KeyAction::FocusDown | KeyAction::Char('j') => {
+                        app.viewport.scroll_down(3); tui.draw(|f| app.render(f))?;
+                    }
+                    KeyAction::FocusUp | KeyAction::Char('k') => {
+                        app.viewport.scroll_up(3); tui.draw(|f| app.render(f))?;
+                    }
+                    KeyAction::Down => { app.viewport.scroll_down(1); tui.draw(|f| app.render(f))?; }
+                    KeyAction::Up => { app.viewport.scroll_up(1); tui.draw(|f| app.render(f))?; }
+                    KeyAction::PageDown => { app.viewport.scroll_down(20); tui.draw(|f| app.render(f))?; }
+                    KeyAction::PageUp => { app.viewport.scroll_up(20); tui.draw(|f| app.render(f))?; }
+                    // Diff expand/collapse
+                    KeyAction::ToggleDiff => {
+                        app.viewport.toggle_diff(); tui.draw(|f| app.render(f))?;
+                    }
+                    // Text selection
+                    KeyAction::ToggleSelectionMode => {
+                        app.text_selection_active = !app.text_selection_active;
+                        tui.set_mouse_capture(!app.text_selection_active)?;
+                        tui.draw(|f| app.render(f))?;
+                    }
+                    _ => { tui.draw(|f| app.render(f))?; }
+                }
+            }
+            Some(_) => {}
+            None => break WriteReviewResult::Reject,
+        }
+    };
+
+    handle.abort();
+
+    // Strip the confirmation prompt from the result (caller will append decision)
+    if let Some(msg) = app.viewport.messages.iter_mut().rev()
+        .find(|m| m.role == MessageRole::Agent)
+    {
+        if let Some(tc) = msg.tool_calls.last_mut() {
+            if let Some(ref mut result) = tc.result {
+                if let Some(idx) = result.find("\n\nAllow for Change?") {
+                    result.truncate(idx);
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 /// TUI-based inline confirmation: shows the request in the viewport with a

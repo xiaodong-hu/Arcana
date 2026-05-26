@@ -18,6 +18,12 @@ pub enum Request {
     WriteConfirmed { path: String, content: String },
     #[serde(rename = "write_text_confirmed")]
     WriteTextConfirmed { path: String, content: String },
+    /// Apply a reviewed temp file to the real path (second phase of write review).
+    #[serde(rename = "write_apply")]
+    WriteApply { path: String, content: String },
+    /// Abort a reviewed write, discarding the temp file.
+    #[serde(rename = "write_abort")]
+    WriteAbort { path: String },
     #[serde(rename = "delete")]
     Delete { path: String },
     #[serde(rename = "delete_confirmed")]
@@ -109,6 +115,17 @@ pub enum Response {
     Mutation {
         records: Vec<MutationRecord>,
         #[serde(default, skip_serializing_if = "String::is_empty")]
+        diff: String,
+    },
+    /// Two-phase write: review the proposed change before applying.
+    #[serde(rename = "review")]
+    Review {
+        path: String,
+        /// Original file content (empty if new file).
+        original: String,
+        /// Proposed new content.
+        proposed: String,
+        /// Unified diff between original and proposed.
         diff: String,
     },
     #[serde(rename = "instruction")]

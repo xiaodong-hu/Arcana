@@ -105,6 +105,8 @@ impl Server {
             Request::WriteTextConfirmed { path, content } => {
                 self.handle_write_text_confirmed(&path, &content)
             }
+            Request::WriteApply { path, content } => self.handle_write_apply(&path, &content),
+            Request::WriteAbort { path } => self.handle_write_abort(&path),
             Request::Delete { path } => self.handle_delete(&path),
             Request::DeleteConfirmed { path } => self.handle_delete_confirmed(&path),
             Request::Rename { src, dst } => self.handle_rename(&src, &dst),
@@ -215,7 +217,61 @@ impl Server {
         if let Err(resp) = self.authorize_write_confirmed(path) {
             return Ok(resp);
         }
+        // Two-phase write: return diff for human review before applying
+        self.review_write(path, content)
+    }
+
+    fn review_write(&mut self, path: &str, proposed: &str) -> io::Result<Response> {
+        let full_path = self.authority.resolve(path);
+        let original = if full_path.exists() {
+            fs::read_to_string(&full_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        // Write proposed content to a temp file for review
+        let hash = hex_sha256(proposed.as_bytes());
+        let review_path = self.tmp_dir.join(format!("review_{}", &hash[..12]));
+        fs::write(&review_path, proposed)?;
+
+        // Generate diff
+        let diff = if original.is_empty() {
+            // New file: show all lines as added
+            proposed
+                .lines()
+                .map(|l| format!("+{}", l))
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            generate_unified_diff(&original, proposed, path)
+        };
+
+        Ok(Response::Review {
+            path: path.to_string(),
+            original,
+            proposed: proposed.to_string(),
+            diff,
+        })
+    }
+
+    fn handle_write_apply(&mut self, path: &str, content: &str) -> io::Result<Response> {
+        if let Err(resp) = self.authorize_write_confirmed(path) {
+            return Ok(resp);
+        }
         self.write_text_authorized(path, content)
+    }
+
+    fn handle_write_abort(&mut self, path: &str) -> io::Result<Response> {
+        // Clean up the review temp file
+        let hash = hex_sha256(path.as_bytes());
+        let review_path = self.tmp_dir.join(format!("review_{}", &hash[..12]));
+        if review_path.exists() {
+            fs::remove_file(&review_path)?;
+        }
+        Ok(Response::Aborted {
+            error_type: AuthorityErrorType::FileAccessAbortError,
+            message: format!("write to {} aborted by user during review", path),
+        })
     }
 
     fn write_authorized(&mut self, path: &str, content_b64: &str) -> io::Result<Response> {
@@ -878,3 +934,42 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 
 // Web fetch is handled by reqwest (Rust HTTP client with rustls TLS).
 // See perform_fetch() above.
+
+/// Generate a simple unified diff between original and proposed text.
+fn generate_unified_diff(original: &str, proposed: &str, path: &str) -> String {
+    let mut diff = String::new();
+    diff.push_str(&format!("diff --git a/{} b/{}\n", path, path));
+    diff.push_str(&format!("--- a/{}\n", path));
+    diff.push_str(&format!("+++ b/{}\n", path));
+    diff.push_str("@@ -1,0 +1,0 @@\n");
+
+    let old_lines: Vec<&str> = original.lines().collect();
+    let new_lines: Vec<&str> = proposed.lines().collect();
+
+    // Simple line-by-line diff: show removed lines then added lines
+    // grouped by contiguous changes
+    let mut i = 0;
+    let mut j = 0;
+    while i < old_lines.len() || j < new_lines.len() {
+        if i < old_lines.len() && j < new_lines.len() && old_lines[i] == new_lines[j] {
+            diff.push_str(&format!(" {}\n", old_lines[i]));
+            i += 1;
+            j += 1;
+        } else {
+            // Changed section
+            while i < old_lines.len()
+                && (j >= new_lines.len() || old_lines[i] != new_lines.get(j).copied().unwrap_or(""))
+            {
+                diff.push_str(&format!("-{}\n", old_lines[i]));
+                i += 1;
+            }
+            while j < new_lines.len()
+                && (i >= old_lines.len() || new_lines[j] != old_lines.get(i).copied().unwrap_or(""))
+            {
+                diff.push_str(&format!("+{}\n", new_lines[j]));
+                j += 1;
+            }
+        }
+    }
+    diff
+}

@@ -1221,7 +1221,7 @@ pub fn render_styled_diff<'a>(
         let remaining = lines.len() - MAX_DIFF_LINES;
         lines.truncate(MAX_DIFF_LINES);
         lines.push(Line::from(vec![Span::styled(
-            format!("  ... {} more lines — ctrl+x to expand", remaining),
+            format!("  ... {} more lines — ctrl+p to expand", remaining),
             Style::default().fg(TOOL_HINT),
         )]));
     }
