@@ -694,24 +694,32 @@ impl Viewport {
                             if let Some(extra) = expanded_request_result(result) {
                                 if let Some(diff_start) = extra.find("diff --git") {
                                     let pre = extra[..diff_start].trim();
-                                    let diff = extra[diff_start..].trim();
+                                    let diff_and_rest = &extra[diff_start..];
+
+                                    // Split diff from confirmation sentinel (if present)
+                                    let (diff_text, confirm_text) =
+                                        if let Some(confirm_start) = diff_and_rest.find("\n__REVIEW__:") {
+                                            let diff_end = confirm_start;
+                                            let confirm = diff_and_rest[confirm_start + "__REVIEW__:".len() + 1..].trim();
+                                            (&diff_and_rest[..diff_end], Some(confirm))
+                                        } else {
+                                            (diff_and_rest, None)
+                                        };
+
                                     for line in pre.lines() {
                                         lines.push((
                                             msg_idx,
                                             Line::from(vec![
                                                 Span::raw("  "),
-                                                Span::styled(
-                                                    line.to_string(),
-                                                    Style::default().fg(TOOL_OUTPUT),
-                                                ),
+                                                Span::styled(line.to_string(), Style::default().fg(TOOL_OUTPUT)),
                                             ]),
                                         ));
                                     }
-                                    if !pre.is_empty() && !diff.is_empty() {
+                                    if !pre.is_empty() && !diff_text.trim().is_empty() {
                                         lines.push((msg_idx, Line::from("")));
                                     }
                                     for styled_line in render_styled_diff(
-                                        diff,
+                                        diff_text.trim(),
                                         &tc.description,
                                         inner.width.saturating_sub(2),
                                         self.diff_collapsed,
@@ -719,6 +727,14 @@ impl Viewport {
                                         let mut spans = vec![Span::raw("  ")];
                                         spans.extend(styled_line.spans);
                                         lines.push((msg_idx, Line::from(spans)));
+                                    }
+
+                                    // Render confirmation prompt BELOW the diff (gray, not inside diff)
+                                    if let Some(confirm) = confirm_text {
+                                        lines.push((msg_idx, Line::from(vec![
+                                            Span::raw("  "),
+                                            Span::styled(confirm.to_string(), Style::default().fg(TOOL_HINT)),
+                                        ])));
                                     }
                                 } else {
                                     for line in extra.lines() {

@@ -1408,7 +1408,9 @@ Hotkeys:\n\
                             };
 
                             // Two-phase write review: show diff + Accept/Edit/Reject
-                            let response = if response.get("status").and_then(|s| s.as_str()) == Some("review") {
+                            let response = if response.get("status").and_then(|s| s.as_str())
+                                == Some("review")
+                            {
                                 let diff = response["diff"].as_str().unwrap_or("");
                                 let path = response["path"].as_str().unwrap_or("");
                                 let proposed = response["proposed"].as_str().unwrap_or("");
@@ -1428,19 +1430,15 @@ Hotkeys:\n\
                                     duration_ms: 0,
                                     collapsed: false,
                                 });
-                                app.viewport.finish_latest_tool_call(
-                                    diff.to_string(),
-                                    0,
-                                );
+                                app.viewport.finish_latest_tool_call(diff.to_string(), 0);
                                 tui.draw(|frame| app.render(frame))?;
 
                                 // Abort main reader so review reader gets all key events
                                 event_handle.abort();
 
                                 // Inline review confirmation (appends prompt to change tool call)
-                                let review_result = tui_review_write(
-                                    &mut app, &mut tui, path, proposed,
-                                )?;
+                                let review_result =
+                                    tui_review_write(&mut app, &mut tui, path, proposed)?;
 
                                 // Respawn main event reader
                                 let (tx2, rx2, handle2) = event::spawn_event_reader();
@@ -1456,7 +1454,11 @@ Hotkeys:\n\
                                 };
                                 // Manually update the change tool call result (finish_latest
                                 // won't find it since result is already set)
-                                if let Some(msg) = app.viewport.messages.iter_mut().rev()
+                                if let Some(msg) = app
+                                    .viewport
+                                    .messages
+                                    .iter_mut()
+                                    .rev()
                                     .find(|m| m.role == MessageRole::Agent)
                                 {
                                     if let Some(tc) = msg.tool_calls.last_mut() {
@@ -1487,7 +1489,9 @@ Hotkeys:\n\
                                         });
                                         match authority_request(socket_path, edit_req) {
                                             Ok(resp) => {
-                                                if resp.get("status").and_then(|s| s.as_str()) == Some("review") {
+                                                if resp.get("status").and_then(|s| s.as_str())
+                                                    == Some("review")
+                                                {
                                                     // Auto-apply edited version
                                                     let apply_req = serde_json::json!({
                                                         "op": "write_apply",
@@ -2321,13 +2325,17 @@ fn tui_review_write(
     proposed: &str,
 ) -> Result<WriteReviewResult, Box<dyn std::error::Error>> {
     // Append confirmation prompt to the change review tool call
-    if let Some(msg) = app.viewport.messages.iter_mut().rev()
+    if let Some(msg) = app
+        .viewport
+        .messages
+        .iter_mut()
+        .rev()
         .find(|m| m.role == MessageRole::Agent)
     {
         if let Some(tc) = msg.tool_calls.last_mut() {
             if let Some(ref mut result) = tc.result {
                 *result = format!(
-                    "{}\n\nAllow for Change?  Yes [y/Enter]  |  Edit [e]  |  Reject [n]",
+                    "{}\n__REVIEW__:Allow for Change?  Yes [y/Enter]  |  Edit [e]  |  Reject [n]",
                     result
                 );
             }
@@ -2335,23 +2343,16 @@ fn tui_review_write(
     }
     tui.draw(|frame| app.render(frame))?;
 
-    // Spawn temporary key reader
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let handle = tokio::spawn(async move {
-        let mut reader = crossterm::event::EventStream::new();
-        use futures::StreamExt;
-        loop {
-            if let Some(Ok(evt)) = reader.next().await {
-                if tx.send(evt).is_err() { break; }
-            }
-        }
-    });
+    // Use event::spawn_event_reader for reliable event reading
+    let (tx, mut rx, handle) = event::spawn_event_reader();
 
     let result = loop {
         let evt = tokio::task::block_in_place(|| rx.blocking_recv());
         match evt {
-            Some(crossterm::event::Event::Key(key)) => {
-                if key.kind == crossterm::event::KeyEventKind::Release { continue; }
+            Some(AppEvent::Key(key)) => {
+                if key.kind == crossterm::event::KeyEventKind::Release {
+                    continue;
+                }
                 let action = classify_key(&key);
 
                 match action {
@@ -2374,18 +2375,33 @@ fn tui_review_write(
                     }
                     // Scroll
                     KeyAction::FocusDown | KeyAction::Char('j') => {
-                        app.viewport.scroll_down(3); tui.draw(|f| app.render(f))?;
+                        app.viewport.scroll_down(3);
+                        tui.draw(|f| app.render(f))?;
                     }
                     KeyAction::FocusUp | KeyAction::Char('k') => {
-                        app.viewport.scroll_up(3); tui.draw(|f| app.render(f))?;
+                        app.viewport.scroll_up(3);
+                        tui.draw(|f| app.render(f))?;
                     }
-                    KeyAction::Down => { app.viewport.scroll_down(1); tui.draw(|f| app.render(f))?; }
-                    KeyAction::Up => { app.viewport.scroll_up(1); tui.draw(|f| app.render(f))?; }
-                    KeyAction::PageDown => { app.viewport.scroll_down(20); tui.draw(|f| app.render(f))?; }
-                    KeyAction::PageUp => { app.viewport.scroll_up(20); tui.draw(|f| app.render(f))?; }
+                    KeyAction::Down => {
+                        app.viewport.scroll_down(1);
+                        tui.draw(|f| app.render(f))?;
+                    }
+                    KeyAction::Up => {
+                        app.viewport.scroll_up(1);
+                        tui.draw(|f| app.render(f))?;
+                    }
+                    KeyAction::PageDown => {
+                        app.viewport.scroll_down(20);
+                        tui.draw(|f| app.render(f))?;
+                    }
+                    KeyAction::PageUp => {
+                        app.viewport.scroll_up(20);
+                        tui.draw(|f| app.render(f))?;
+                    }
                     // Diff expand/collapse
                     KeyAction::ToggleDiff => {
-                        app.viewport.toggle_diff(); tui.draw(|f| app.render(f))?;
+                        app.viewport.toggle_diff();
+                        tui.draw(|f| app.render(f))?;
                     }
                     // Text selection
                     KeyAction::ToggleSelectionMode => {
@@ -2393,7 +2409,9 @@ fn tui_review_write(
                         tui.set_mouse_capture(!app.text_selection_active)?;
                         tui.draw(|f| app.render(f))?;
                     }
-                    _ => { tui.draw(|f| app.render(f))?; }
+                    _ => {
+                        tui.draw(|f| app.render(f))?;
+                    }
                 }
             }
             Some(_) => {}
@@ -2404,12 +2422,16 @@ fn tui_review_write(
     handle.abort();
 
     // Strip the confirmation prompt from the result (caller will append decision)
-    if let Some(msg) = app.viewport.messages.iter_mut().rev()
+    if let Some(msg) = app
+        .viewport
+        .messages
+        .iter_mut()
+        .rev()
         .find(|m| m.role == MessageRole::Agent)
     {
         if let Some(tc) = msg.tool_calls.last_mut() {
             if let Some(ref mut result) = tc.result {
-                if let Some(idx) = result.find("\n\nAllow for Change?") {
+                if let Some(idx) = result.find("\n__REVIEW__:") {
                     result.truncate(idx);
                 }
             }

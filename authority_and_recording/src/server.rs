@@ -944,7 +944,9 @@ fn generate_unified_diff(original: &str, proposed: &str, path: &str) -> String {
     // Mark changed line indices
     let mut changed = vec![false; max_len];
     for i in 0..old_lines.len().min(new_lines.len()) {
-        if old_lines[i] != new_lines[i] { changed[i] = true; }
+        if old_lines[i] != new_lines[i] {
+            changed[i] = true;
+        }
     }
     for i in old_lines.len().min(new_lines.len())..max_len {
         changed[i] = true;
@@ -957,22 +959,26 @@ fn generate_unified_diff(original: &str, proposed: &str, path: &str) -> String {
         if changed[i] {
             let s = i.saturating_sub(CONTEXT);
             let e = (i + CONTEXT + 1).min(max_len);
-            for j in s..e { show[j] = true; }
+            for j in s..e {
+                show[j] = true;
+            }
         }
     }
 
     // Build hunks
-    let mut diff = format!(
-        "diff --git a/{0} b/{0}\n--- a/{0}\n+++ b/{0}\n",
-        path
-    );
+    let mut diff = format!("diff --git a/{0} b/{0}\n--- a/{0}\n+++ b/{0}\n", path);
     let mut i = 0;
     while i < max_len {
-        if !show[i] { i += 1; continue; }
+        if !show[i] {
+            i += 1;
+            continue;
+        }
 
         // Start of hunk — find the range of consecutive shown lines
         let hunk_start = i;
-        while i < max_len && show[i] { i += 1; }
+        while i < max_len && show[i] {
+            i += 1;
+        }
         let hunk_end = i;
 
         // Compute line numbers
