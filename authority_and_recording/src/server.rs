@@ -105,6 +105,8 @@ impl Server {
             Request::WriteTextConfirmed { path, content } => {
                 self.handle_write_text_confirmed(&path, &content)
             }
+            Request::WriteApply { path, content } => self.handle_write_apply(&path, &content),
+            Request::WriteAbort { path } => self.handle_write_abort(&path),
             Request::Delete { path } => self.handle_delete(&path),
             Request::DeleteConfirmed { path } => self.handle_delete_confirmed(&path),
             Request::Rename { src, dst } => self.handle_rename(&src, &dst),
@@ -215,7 +217,62 @@ impl Server {
         if let Err(resp) = self.authorize_write_confirmed(path) {
             return Ok(resp);
         }
+        // Two-phase write: return diff for human review before applying
+        self.review_write(path, content)
+    }
+
+    fn review_write(&mut self, path: &str, proposed: &str) -> io::Result<Response> {
+        let full_path = self.authority.resolve(path);
+        let original = if full_path.exists() {
+            fs::read_to_string(&full_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        // Write proposed content to a temp file for review
+        let hash = hex_sha256(proposed.as_bytes());
+        let review_path = self.tmp_dir.join(format!("review_{}", &hash[..12]));
+        fs::write(&review_path, proposed)?;
+
+        // Generate diff
+        let diff = if original.is_empty() {
+            // New file: show all lines as added
+            proposed
+                .lines()
+                .map(|l| format!("+{}", l))
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            generate_unified_diff(&original, proposed, path)
+        };
+
+        Ok(Response::Review {
+            path: path.to_string(),
+            original,
+            proposed: proposed.to_string(),
+            diff,
+            review_path: review_path.to_string_lossy().to_string(),
+        })
+    }
+
+    fn handle_write_apply(&mut self, path: &str, content: &str) -> io::Result<Response> {
+        if let Err(resp) = self.authorize_write_confirmed(path) {
+            return Ok(resp);
+        }
         self.write_text_authorized(path, content)
+    }
+
+    fn handle_write_abort(&mut self, path: &str) -> io::Result<Response> {
+        // Clean up the review temp file
+        let hash = hex_sha256(path.as_bytes());
+        let review_path = self.tmp_dir.join(format!("review_{}", &hash[..12]));
+        if review_path.exists() {
+            fs::remove_file(&review_path)?;
+        }
+        Ok(Response::Aborted {
+            error_type: AuthorityErrorType::FileAccessAbortError,
+            message: format!("write to {} aborted by user during review", path),
+        })
     }
 
     fn write_authorized(&mut self, path: &str, content_b64: &str) -> io::Result<Response> {
@@ -878,3 +935,84 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 
 // Web fetch is handled by reqwest (Rust HTTP client with rustls TLS).
 // See perform_fetch() above.
+
+/// Generate a unified diff showing only context around changed lines.
+fn generate_unified_diff(original: &str, proposed: &str, path: &str) -> String {
+    let old_lines: Vec<&str> = original.lines().collect();
+    let new_lines: Vec<&str> = proposed.lines().collect();
+    let max_len = old_lines.len().max(new_lines.len());
+
+    // Mark changed line indices
+    let mut changed = vec![false; max_len];
+    for i in 0..old_lines.len().min(new_lines.len()) {
+        if old_lines[i] != new_lines[i] {
+            changed[i] = true;
+        }
+    }
+    for i in old_lines.len().min(new_lines.len())..max_len {
+        changed[i] = true;
+    }
+
+    // Include CONTEXT lines of context around each change
+    const CONTEXT: usize = 3;
+    let mut show = vec![false; max_len];
+    for i in 0..max_len {
+        if changed[i] {
+            let s = i.saturating_sub(CONTEXT);
+            let e = (i + CONTEXT + 1).min(max_len);
+            for j in s..e {
+                show[j] = true;
+            }
+        }
+    }
+
+    // Build hunks
+    let mut diff = format!("diff --git a/{0} b/{0}\n--- a/{0}\n+++ b/{0}\n", path);
+    let mut i = 0;
+    while i < max_len {
+        if !show[i] {
+            i += 1;
+            continue;
+        }
+
+        // Start of hunk — find the range of consecutive shown lines
+        let hunk_start = i;
+        while i < max_len && show[i] {
+            i += 1;
+        }
+        let hunk_end = i;
+
+        // Compute line numbers
+        let old_start = (hunk_start + 1).min(old_lines.len().saturating_add(1));
+        let new_start = (hunk_start + 1).min(new_lines.len().saturating_add(1));
+        let mut old_count = 0u32;
+        let mut new_count = 0u32;
+        let mut hunk_text = String::new();
+
+        for j in hunk_start..hunk_end {
+            let o = old_lines.get(j).copied().unwrap_or("");
+            let n = new_lines.get(j).copied().unwrap_or("");
+            if j < old_lines.len() && j < new_lines.len() && o == n {
+                hunk_text.push_str(&format!(" {}\n", o));
+                old_count += 1;
+                new_count += 1;
+            } else {
+                if j < old_lines.len() {
+                    hunk_text.push_str(&format!("-{}\n", o));
+                    old_count += 1;
+                }
+                if j < new_lines.len() {
+                    hunk_text.push_str(&format!("+{}\n", n));
+                    new_count += 1;
+                }
+            }
+        }
+
+        diff.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n{}",
+            old_start, old_count, new_start, new_count, hunk_text
+        ));
+    }
+
+    diff
+}

@@ -75,7 +75,7 @@ impl Viewport {
         Self::default()
     }
 
-    fn invalidate_render_cache(&mut self) {
+    pub(crate) fn invalidate_render_cache(&mut self) {
         self.render_cache.valid = false;
     }
 
@@ -653,11 +653,15 @@ impl Viewport {
                             ToolType::Search => "Search",
                             _ => "Authority",
                         };
+                        let is_change = action == "Change";
                         let suffix = match tc.tool_type {
                             ToolType::Search => " for ",
+                            _ if is_change => " to ",
                             _ => " Access to ",
                         };
                         let status = tc.result.as_deref().and_then(compact_request_status);
+                        // "Change" action → entire line pigment green, "Applies" in amber.
+                        // Other actions → action word in amber, rest in pigment green.
                         let mut request_spans = vec![
                             Span::styled(
                                 heading,
@@ -666,20 +670,36 @@ impl Viewport {
                                     .add_modifier(Modifier::BOLD),
                             ),
                             Span::styled(format!("{object} "), Style::default().fg(heading_color)),
-                            Span::styled(
+                        ];
+                        if is_change {
+                            request_spans.push(Span::styled(
+                                action.to_string(),
+                                Style::default().fg(heading_color),
+                            ));
+                            request_spans.push(Span::styled(
+                                " Applies",
+                                Style::default()
+                                    .fg(AMBER_SAE_ECE)
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                            request_spans
+                                .push(Span::styled(suffix, Style::default().fg(heading_color)));
+                        } else {
+                            request_spans.push(Span::styled(
                                 action.to_string(),
                                 Style::default()
                                     .fg(AMBER_SAE_ECE)
                                     .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(suffix, Style::default().fg(heading_color)),
-                            Span::styled("`", Style::default().fg(heading_color)),
-                            Span::styled(
-                                tc.description.clone(),
-                                Style::default().fg(heading_color),
-                            ),
-                            Span::styled("`.", Style::default().fg(heading_color)),
-                        ];
+                            ));
+                            request_spans
+                                .push(Span::styled(suffix, Style::default().fg(heading_color)));
+                        }
+                        request_spans.push(Span::styled("`", Style::default().fg(heading_color)));
+                        request_spans.push(Span::styled(
+                            tc.description.clone(),
+                            Style::default().fg(heading_color),
+                        ));
+                        request_spans.push(Span::styled("`.", Style::default().fg(heading_color)));
                         if let Some(status) = status {
                             request_spans.push(Span::raw(" "));
                             request_spans.push(Span::styled(
@@ -694,7 +714,35 @@ impl Viewport {
                             if let Some(extra) = expanded_request_result(result) {
                                 if let Some(diff_start) = extra.find("diff --git") {
                                     let pre = extra[..diff_start].trim();
-                                    let diff = extra[diff_start..].trim();
+                                    let diff_and_rest = &extra[diff_start..];
+
+                                    // Split diff from confirmation sentinel (if present)
+                                    let (mut diff_text, confirm_text) = if let Some(confirm_start) =
+                                        diff_and_rest.find("\n__REVIEW__:")
+                                    {
+                                        let diff_end = confirm_start;
+                                        let confirm = diff_and_rest
+                                            [confirm_start + "__REVIEW__:".len() + 1..]
+                                            .trim();
+                                        (&diff_and_rest[..diff_end], Some(confirm))
+                                    } else {
+                                        (diff_and_rest, None)
+                                    };
+
+                                    // Also strip trailing review-decision keyword so it
+                                    // never ends up inside render_styled_diff (which strips
+                                    // the first char of every line — causing truncation).
+                                    let decision_text: Option<&str> =
+                                        extract_trailing_decision(diff_text);
+                                    if decision_text.is_some() {
+                                        // Remove the trailing decision line from diff_text
+                                        if let Some(pos) = diff_text.rfind('\n') {
+                                            diff_text = &diff_text[..pos];
+                                        } else {
+                                            diff_text = "";
+                                        }
+                                    }
+
                                     for line in pre.lines() {
                                         lines.push((
                                             msg_idx,
@@ -707,11 +755,11 @@ impl Viewport {
                                             ]),
                                         ));
                                     }
-                                    if !pre.is_empty() && !diff.is_empty() {
+                                    if !pre.is_empty() && !diff_text.trim().is_empty() {
                                         lines.push((msg_idx, Line::from("")));
                                     }
                                     for styled_line in render_styled_diff(
-                                        diff,
+                                        diff_text.trim(),
                                         &tc.description,
                                         inner.width.saturating_sub(2),
                                         self.diff_collapsed,
@@ -719,6 +767,42 @@ impl Viewport {
                                         let mut spans = vec![Span::raw("  ")];
                                         spans.extend(styled_line.spans);
                                         lines.push((msg_idx, Line::from(spans)));
+                                    }
+
+                                    // Render confirmation prompt BELOW the diff (gray, not inside diff).
+                                    // Render final review decision keyword below the diff
+                                    // (always visible, never inside the diff block).
+                                    // Exactly one blank separator between diff and confirm/decision.
+                                    let has_confirm = confirm_text.is_some();
+                                    let has_decision = decision_text.is_some();
+                                    if has_confirm || has_decision {
+                                        lines.push((msg_idx, Line::from("")));
+                                    }
+                                    if let Some(confirm) = confirm_text {
+                                        lines.push((
+                                            msg_idx,
+                                            Line::from(vec![
+                                                Span::raw("  "),
+                                                Span::styled(
+                                                    confirm.to_string(),
+                                                    Style::default().fg(TOOL_HINT),
+                                                ),
+                                            ]),
+                                        ));
+                                    }
+                                    if let Some(decision) = decision_text {
+                                        lines.push((
+                                            msg_idx,
+                                            Line::from(vec![
+                                                Span::raw("  "),
+                                                Span::styled(
+                                                    decision.to_string(),
+                                                    Style::default()
+                                                        .fg(PIGMENT_GREEN)
+                                                        .add_modifier(Modifier::BOLD),
+                                                ),
+                                            ]),
+                                        ));
                                     }
                                 } else {
                                     for line in extra.lines() {
@@ -1015,6 +1099,18 @@ fn push_shell_highlighted(spans: &mut Vec<Span>, command: &str) {
     }
 }
 
+/// If the text ends with a review decision keyword, return it.
+/// These keywords are stored as the last line of the diff result after the
+/// review completes.  They must be rendered separately (never inside the
+/// diff code block, which strips the first character of every line).
+fn extract_trailing_decision(text: &str) -> Option<&str> {
+    let last = text.lines().rev().find(|l| !l.trim().is_empty())?.trim();
+    match last {
+        "Allowed." | "Edited." | "Rejected." => Some(last),
+        _ => None,
+    }
+}
+
 fn compact_request_status(result: &str) -> Option<String> {
     let trimmed = result.trim();
     if trimmed.is_empty() {
@@ -1054,6 +1150,20 @@ fn compact_request_status(result: &str) -> Option<String> {
     }
     if let Some(reason) = trimmed.strip_prefix("aborted:") {
         return Some(format!("Aborted:{}", reason));
+    }
+    // For diff results, check if a review decision keyword is on the last non-empty line
+    if trimmed.starts_with("diff --git") {
+        let last_non_empty = trimmed
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .map(str::trim);
+        match last_non_empty {
+            Some("Allowed.") => return Some("Allowed.".to_string()),
+            Some("Edited.") => return Some("Edited.".to_string()),
+            Some("Rejected.") => return Some("Rejected.".to_string()),
+            _ => return None,
+        }
     }
     trimmed.lines().next().map(str::to_string)
 }
@@ -1221,7 +1331,7 @@ pub fn render_styled_diff<'a>(
         let remaining = lines.len() - MAX_DIFF_LINES;
         lines.truncate(MAX_DIFF_LINES);
         lines.push(Line::from(vec![Span::styled(
-            format!("  ... {} more lines — ctrl+x to expand", remaining),
+            format!("  ... {} more lines — ctrl+p to expand", remaining),
             Style::default().fg(TOOL_HINT),
         )]));
     }
