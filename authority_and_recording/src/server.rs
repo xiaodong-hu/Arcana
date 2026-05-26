@@ -935,41 +935,77 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 // Web fetch is handled by reqwest (Rust HTTP client with rustls TLS).
 // See perform_fetch() above.
 
-/// Generate a simple unified diff between original and proposed text.
+/// Generate a unified diff showing only context around changed lines.
 fn generate_unified_diff(original: &str, proposed: &str, path: &str) -> String {
-    let mut diff = String::new();
-    diff.push_str(&format!("diff --git a/{} b/{}\n", path, path));
-    diff.push_str(&format!("--- a/{}\n", path));
-    diff.push_str(&format!("+++ b/{}\n", path));
-    diff.push_str("@@ -1,0 +1,0 @@\n");
-
     let old_lines: Vec<&str> = original.lines().collect();
     let new_lines: Vec<&str> = proposed.lines().collect();
+    let max_len = old_lines.len().max(new_lines.len());
 
-    // Simple line-by-line diff: show removed lines then added lines
-    // grouped by contiguous changes
-    let mut i = 0;
-    let mut j = 0;
-    while i < old_lines.len() || j < new_lines.len() {
-        if i < old_lines.len() && j < new_lines.len() && old_lines[i] == new_lines[j] {
-            diff.push_str(&format!(" {}\n", old_lines[i]));
-            i += 1;
-            j += 1;
-        } else {
-            // Changed section
-            while i < old_lines.len()
-                && (j >= new_lines.len() || old_lines[i] != new_lines.get(j).copied().unwrap_or(""))
-            {
-                diff.push_str(&format!("-{}\n", old_lines[i]));
-                i += 1;
-            }
-            while j < new_lines.len()
-                && (i >= old_lines.len() || new_lines[j] != old_lines.get(i).copied().unwrap_or(""))
-            {
-                diff.push_str(&format!("+{}\n", new_lines[j]));
-                j += 1;
-            }
+    // Mark changed line indices
+    let mut changed = vec![false; max_len];
+    for i in 0..old_lines.len().min(new_lines.len()) {
+        if old_lines[i] != new_lines[i] { changed[i] = true; }
+    }
+    for i in old_lines.len().min(new_lines.len())..max_len {
+        changed[i] = true;
+    }
+
+    // Include CONTEXT lines of context around each change
+    const CONTEXT: usize = 3;
+    let mut show = vec![false; max_len];
+    for i in 0..max_len {
+        if changed[i] {
+            let s = i.saturating_sub(CONTEXT);
+            let e = (i + CONTEXT + 1).min(max_len);
+            for j in s..e { show[j] = true; }
         }
     }
+
+    // Build hunks
+    let mut diff = format!(
+        "diff --git a/{0} b/{0}\n--- a/{0}\n+++ b/{0}\n",
+        path
+    );
+    let mut i = 0;
+    while i < max_len {
+        if !show[i] { i += 1; continue; }
+
+        // Start of hunk — find the range of consecutive shown lines
+        let hunk_start = i;
+        while i < max_len && show[i] { i += 1; }
+        let hunk_end = i;
+
+        // Compute line numbers
+        let old_start = (hunk_start + 1).min(old_lines.len().saturating_add(1));
+        let new_start = (hunk_start + 1).min(new_lines.len().saturating_add(1));
+        let mut old_count = 0u32;
+        let mut new_count = 0u32;
+        let mut hunk_text = String::new();
+
+        for j in hunk_start..hunk_end {
+            let o = old_lines.get(j).copied().unwrap_or("");
+            let n = new_lines.get(j).copied().unwrap_or("");
+            if j < old_lines.len() && j < new_lines.len() && o == n {
+                hunk_text.push_str(&format!(" {}\n", o));
+                old_count += 1;
+                new_count += 1;
+            } else {
+                if j < old_lines.len() {
+                    hunk_text.push_str(&format!("-{}\n", o));
+                    old_count += 1;
+                }
+                if j < new_lines.len() {
+                    hunk_text.push_str(&format!("+{}\n", n));
+                    new_count += 1;
+                }
+            }
+        }
+
+        diff.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n{}",
+            old_start, old_count, new_start, new_count, hunk_text
+        ));
+    }
+
     diff
 }

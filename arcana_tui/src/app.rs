@@ -1434,10 +1434,19 @@ Hotkeys:\n\
                                 );
                                 tui.draw(|frame| app.render(frame))?;
 
+                                // Abort main reader so review reader gets all key events
+                                event_handle.abort();
+
                                 // Inline review confirmation (appends prompt to change tool call)
                                 let review_result = tui_review_write(
                                     &mut app, &mut tui, path, proposed,
                                 )?;
+
+                                // Respawn main event reader
+                                let (tx2, rx2, handle2) = event::spawn_event_reader();
+                                event_tx = tx2;
+                                events = rx2;
+                                event_handle = handle2;
 
                                 // Update change tool call with decision
                                 let decision = match &review_result {
@@ -1445,10 +1454,15 @@ Hotkeys:\n\
                                     WriteReviewResult::Edit(_) => "Edited.",
                                     WriteReviewResult::Reject => "Rejected.",
                                 };
-                                app.viewport.finish_latest_tool_call(
-                                    decision.to_string(),
-                                    0,
-                                );
+                                // Manually update the change tool call result (finish_latest
+                                // won't find it since result is already set)
+                                if let Some(msg) = app.viewport.messages.iter_mut().rev()
+                                    .find(|m| m.role == MessageRole::Agent)
+                                {
+                                    if let Some(tc) = msg.tool_calls.last_mut() {
+                                        tc.result = Some(format!("{}\n{}", diff, decision));
+                                    }
+                                }
 
                                 match review_result {
                                     WriteReviewResult::Accept => {

@@ -1055,6 +1055,10 @@ fn compact_request_status(result: &str) -> Option<String> {
     if let Some(reason) = trimmed.strip_prefix("aborted:") {
         return Some(format!("Aborted:{}", reason));
     }
+    // Skip diff text — it's handled by expanded_request_result + render_styled_diff
+    if trimmed.starts_with("diff --git") {
+        return None;
+    }
     trimmed.lines().next().map(str::to_string)
 }
 
