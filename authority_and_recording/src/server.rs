@@ -560,7 +560,11 @@ impl Server {
         }
     }
 
-    fn handle_exec_shell_confirmed(&mut self, command: &str, readonly: bool) -> io::Result<Response> {
+    fn handle_exec_shell_confirmed(
+        &mut self,
+        command: &str,
+        readonly: bool,
+    ) -> io::Result<Response> {
         let args = vec!["-c".to_string(), command.to_string()];
         if let RuleVerdict::Deny = self.authority.check_tool("sh", &args) {
             return Ok(Response::Denied {

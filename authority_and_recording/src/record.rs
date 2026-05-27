@@ -39,6 +39,9 @@ pub struct Record {
     /// rebuilt from scratch on daemon restart (which does a full baseline
     /// scan anyway).  Snapshot format is unchanged.
     file_stats: HashMap<String, (i64, u64)>,
+    /// Patterns from .gitignore (project root).  Files/dirs matching these
+    /// are excluded from the recorded tree.  Empty → record everything.
+    gitignore_patterns: Vec<String>,
 }
 
 impl Record {
@@ -59,12 +62,20 @@ impl Record {
         };
 
         let tree = Self::rebuild_tree(&record_dir, seq)?;
+        let gitignore_patterns = load_gitignore(&project_root);
+        if !gitignore_patterns.is_empty() {
+            eprintln!(
+                "[Arcana] Loaded {} .gitignore patterns — excluded paths will not be recorded.",
+                gitignore_patterns.len()
+            );
+        }
         let record = Self {
             project_root,
             record_dir,
             seq,
             tree,
             file_stats: HashMap::new(),
+            gitignore_patterns,
         };
 
         if !head_path.exists() {
@@ -303,7 +314,7 @@ impl Record {
                 Ok(rel) => rel,
                 Err(_) => continue,
             };
-            if should_skip_path(rel) {
+            if should_skip_path(rel, &self.gitignore_patterns) {
                 continue;
             }
 
@@ -529,9 +540,10 @@ fn sorted_removed_paths(
     paths
 }
 
-fn should_skip_path(rel: &Path) -> bool {
+fn should_skip_path(rel: &Path, gitignore_patterns: &[String]) -> bool {
     let path = normalize_rel_path(rel);
-    path == ".git"
+    // Always skip .git and .arcana internals
+    if path == ".git"
         || path.starts_with(".git/")
         || path == ".arcana/git_record"
         || path.starts_with(".arcana/git_record/")
@@ -541,6 +553,57 @@ fn should_skip_path(rel: &Path) -> bool {
         || path.starts_with(".arcana/web_cache/")
         || path == ".arcana/tmp"
         || path.starts_with(".arcana/tmp/")
+    {
+        return true;
+    }
+    // Check .gitignore patterns (if any)
+    for pattern in gitignore_patterns {
+        if glob_match::glob_match(pattern, &path) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Parse .gitignore from the project root and return glob-matchable patterns.
+/// Handles: comments (#), empty lines, trailing `/` for directories,
+/// leading `/` for root-relative patterns.
+fn load_gitignore(project_root: &Path) -> Vec<String> {
+    let path = project_root.join(".gitignore");
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut patterns = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        // Skip comments and blanks
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Skip negation patterns for now (rarely needed for exclusion)
+        if line.starts_with('!') {
+            continue;
+        }
+        let mut pat = line.to_string();
+        // Remove leading / (root-relative — we always match from root)
+        if pat.starts_with('/') {
+            pat = pat[1..].to_string();
+        }
+        // Trailing / → match directory and its contents
+        if pat.ends_with('/') {
+            let dir = pat.trim_end_matches('/');
+            patterns.push(dir.to_string());
+            patterns.push(format!("{}/**", dir));
+        } else if !pat.contains('/') {
+            // Bare filename/glob: match at any depth
+            patterns.push(format!("**/{}", pat));
+            patterns.push(pat);
+        } else {
+            patterns.push(pat);
+        }
+    }
+    patterns
 }
 
 fn normalize_rel_path(path: &Path) -> String {
@@ -558,7 +621,7 @@ fn remove_empty_parent_dirs(project_root: &Path, parent: Option<&Path>) -> io::R
         return Ok(());
     };
     if parent == project_root
-        || should_skip_path(parent.strip_prefix(project_root).unwrap_or(parent))
+        || should_skip_path(parent.strip_prefix(project_root).unwrap_or(parent), &[])
     {
         return Ok(());
     }
@@ -679,7 +742,9 @@ mod tests {
         let root = temp_project("baseline");
         fs::write(root.join("README.md"), "original\n").unwrap();
 
-        let _record = Record::open(&root).unwrap();
+        let mut record = Record::open(&root).unwrap();
+        // Trigger the deferred baseline scan so a seq=0 snapshot exists
+        record.scan_project_tree().unwrap();
         fs::remove_file(root.join("README.md")).unwrap();
 
         Record::recover(&root, Some(0)).unwrap();

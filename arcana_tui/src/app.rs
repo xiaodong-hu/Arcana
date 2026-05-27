@@ -1349,10 +1349,15 @@ Hotkeys:\n\
                                         // expensive before/after project-tree scan
                                         let mut safe_req = request.clone();
                                         if let Some(obj) = safe_req.as_object_mut() {
-                                            if obj.get("op").and_then(|v| v.as_str())
+                                            if obj
+                                                .get("op")
+                                                .and_then(|v| v.as_str())
                                                 .map_or(false, |op| op.starts_with("exec_shell"))
                                             {
-                                                obj.insert("readonly".to_string(), serde_json::json!(true));
+                                                obj.insert(
+                                                    "readonly".to_string(),
+                                                    serde_json::json!(true),
+                                                );
                                             }
                                         }
                                         let safe = ApprovedAuthorityRequest {
